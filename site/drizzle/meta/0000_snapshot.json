@@ -1,0 +1,347 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "6522bd4b-fd41-410b-95f4-9321483d3503",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "anonymous_sessions": {
+      "name": "anonymous_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "anonymous_sessions_expires_at_idx": {
+          "name": "anonymous_sessions_expires_at_idx",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "anonymous_sessions_expiry_check": {
+          "name": "anonymous_sessions_expiry_check",
+          "value": "\"anonymous_sessions\".\"expires_at\" > \"anonymous_sessions\".\"created_at\""
+        }
+      }
+    },
+    "saved_screener_baseline_symbols": {
+      "name": "saved_screener_baseline_symbols",
+      "columns": {
+        "screener_id": {
+          "name": "screener_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "saved_screener_baseline_symbol_idx": {
+          "name": "saved_screener_baseline_symbol_idx",
+          "columns": [
+            "symbol"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "saved_screener_baseline_symbols_screener_id_saved_screeners_id_fk": {
+          "name": "saved_screener_baseline_symbols_screener_id_saved_screeners_id_fk",
+          "tableFrom": "saved_screener_baseline_symbols",
+          "tableTo": "saved_screeners",
+          "columnsFrom": [
+            "screener_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "saved_screener_baseline_symbols_pk": {
+          "columns": [
+            "screener_id",
+            "symbol"
+          ],
+          "name": "saved_screener_baseline_symbols_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "saved_screeners": {
+      "name": "saved_screeners",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "filters_json": {
+          "name": "filters_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "columns_json": {
+          "name": "columns_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sort_key": {
+          "name": "sort_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "baseline_captured_at": {
+          "name": "baseline_captured_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "saved_screeners_session_updated_idx": {
+          "name": "saved_screeners_session_updated_idx",
+          "columns": [
+            "session_id",
+            "updated_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "saved_screeners_session_id_anonymous_sessions_id_fk": {
+          "name": "saved_screeners_session_id_anonymous_sessions_id_fk",
+          "tableFrom": "saved_screeners",
+          "tableTo": "anonymous_sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "saved_screeners_sort_order_check": {
+          "name": "saved_screeners_sort_order_check",
+          "value": "\"saved_screeners\".\"sort_order\" in ('asc', 'desc')"
+        }
+      }
+    },
+    "security_journal": {
+      "name": "security_journal",
+      "columns": {
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "exchange": {
+          "name": "exchange",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "sentiment": {
+          "name": "sentiment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'neutral'"
+        },
+        "watch_price": {
+          "name": "watch_price",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "security_journal_session_updated_idx": {
+          "name": "security_journal_session_updated_idx",
+          "columns": [
+            "session_id",
+            "updated_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "security_journal_session_id_anonymous_sessions_id_fk": {
+          "name": "security_journal_session_id_anonymous_sessions_id_fk",
+          "tableFrom": "security_journal",
+          "tableTo": "anonymous_sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "security_journal_pk": {
+          "columns": [
+            "session_id",
+            "exchange",
+            "symbol"
+          ],
+          "name": "security_journal_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "security_journal_sentiment_check": {
+          "name": "security_journal_sentiment_check",
+          "value": "\"security_journal\".\"sentiment\" in ('bear', 'neutral', 'bull')"
+        },
+        "security_journal_watch_price_check": {
+          "name": "security_journal_watch_price_check",
+          "value": "\"security_journal\".\"watch_price\" is null or \"security_journal\".\"watch_price\" > 0"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

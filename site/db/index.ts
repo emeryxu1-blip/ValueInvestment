@@ -1,0 +1,14 @@
+import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { drizzle } from "drizzle-orm/d1";
+import * as schema from "./schema";
+
+export async function getDb() {
+  const { env } = getCloudflareContext();
+  if (!env.DB) {
+    throw new Error(
+      "Cloudflare D1 binding `DB` is unavailable. Configure it in wrangler.jsonc before using workspace persistence.",
+    );
+  }
+
+  return drizzle(env.DB, { schema });
+}

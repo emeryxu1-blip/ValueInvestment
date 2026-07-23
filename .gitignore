@@ -1,0 +1,9 @@
+.DS_Store
+/skills/
+site/node_modules/
+site/.next/
+site/.open-next/
+site/.vinext/
+site/dist/
+site/.wrangler/
+site/.env*
