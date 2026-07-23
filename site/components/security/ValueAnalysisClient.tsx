@@ -3,7 +3,6 @@
 import Link from "next/link";
 import {
   ArrowDownRight,
-  ArrowLeft,
   ArrowUpRight,
   BarChart3,
   Calculator,
@@ -34,7 +33,6 @@ import type {
   SecurityAnalysisResponse,
 } from "@/lib/contracts";
 import {
-  DEFAULT_DCF_ASSUMPTIONS,
   analysisMetricNumber as metricNumber,
   calculateDcfFromMetrics,
   opportunityLabel,
@@ -44,7 +42,8 @@ import {
   type DcfModel,
   type RelativeMeasure,
 } from "@/lib/security/valuation";
-import { SecurityResearchNav } from "./SecurityResearchNav";
+import ResearchPanelHeader from "./ResearchPanelHeader";
+import { useSecurityResearchShell } from "./SecurityResearchShell";
 
 type AnalysisMode = "cash-flow-value" | "relative-value";
 
@@ -105,13 +104,14 @@ export default function ValueAnalysisClient({
   mode,
 }: Props) {
   const canonicalSymbol = symbol.toUpperCase();
+  const {
+    dcfAssumptions: assumptions,
+    setDcfAssumptions: setAssumptions,
+  } = useSecurityResearchShell();
   const [data, setData] = useState<SecurityAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [assumptions, setAssumptions] = useState<DcfAssumptions>({
-    ...DEFAULT_DCF_ASSUMPTIONS,
-  });
 
   const view =
     mode === "cash-flow-value" ? "dcf-valuation" : "relative-valuation";
@@ -176,38 +176,68 @@ export default function ValueAnalysisClient({
     mode === "relative-value"
       ? relativeValuation?.scenarios ?? []
       : valuationScenarios(baseValue);
+  const isCashFlowView = mode === "cash-flow-value";
+  const panelHeader = isCashFlowView
+    ? {
+        view: "cash-flow" as const,
+        eyebrow: "Cash-flow safety",
+        title: "Cash-flow margin of safety",
+        description:
+          "Estimate future owner earnings with conservative growth and discount assumptions, then demand enough distance between value and price.",
+      }
+    : {
+        view: "market-expectations" as const,
+        eyebrow: "Market expectations",
+        title: "Market expectation check",
+        description:
+          "Compare the expectations embedded in today's price with similar businesses, then test whether any discount reflects weaker economics.",
+      };
+  const panelRefreshAction = (
+    <button
+      className="security-research-panel-header__action"
+      type="button"
+      onClick={() => void load(true)}
+      aria-label="Refresh analysis"
+      disabled={loading || refreshing}
+    >
+      <RefreshCw
+        aria-hidden="true"
+        className={refreshing ? "is-spinning" : ""}
+        size={16}
+      />
+      Refresh analysis
+    </button>
+  );
 
   if (loading && data === null) {
     return (
-      <main className="analysis-page">
-        <div className="analysis-shell analysis-loading">
-          <span className="analysis-loading-mark" aria-hidden="true" />
-          <p>
-            Preparing{" "}
-            {mode === "cash-flow-value"
-              ? "cash-flow margin of safety"
-              : "market expectation check"}{" "}
-            for {canonicalSymbol}
-          </p>
+      <div className="analysis-page">
+        <div className="analysis-shell">
+          <ResearchPanelHeader
+            {...panelHeader}
+            action={panelRefreshAction}
+          />
+          <div
+            className="security-research-panel-loading"
+            aria-busy="true"
+          >
+            <span aria-hidden="true" />
+            <p>
+              Preparing{" "}
+              {isCashFlowView
+                ? "cash-flow margin of safety"
+                : "market expectation check"}{" "}
+              for {canonicalSymbol}
+            </p>
+          </div>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="analysis-page">
+    <div className="analysis-page">
       <div className="analysis-shell">
-        <Link className="analysis-back" href="/value-opportunities">
-          <ArrowLeft aria-hidden="true" size={16} />
-          Back to opportunity finder
-        </Link>
-
-        <SecurityResearchNav
-          exchange={exchange}
-          symbol={symbol}
-          active={mode}
-        />
-
         {error ? (
           <div className="analysis-notice" role="status">
             <span>{error} Missing figures remain blank.</span>
@@ -217,44 +247,10 @@ export default function ValueAnalysisClient({
           </div>
         ) : null}
 
-        <header className="analysis-hero">
-          <div>
-            <p className="analysis-kicker">
-              {canonicalSymbol} · {exchange.toUpperCase()}
-            </p>
-            <h1>
-              {mode === "cash-flow-value"
-                ? "Cash-flow margin of safety"
-                : "Market expectation check"}
-            </h1>
-            <p className="analysis-subtitle">
-              {mode === "cash-flow-value"
-                ? "What future owner earnings may be worth today."
-                : "What today’s price assumes compared with similar businesses."}
-            </p>
-            <p className="analysis-intro">
-              {mode === "cash-flow-value"
-                ? "Start with owner earnings, use conservative growth and discount assumptions, and demand enough distance between value and price to absorb forecast error."
-                : "A value investor uses comparable businesses to expose the expectations embedded in today’s price—then asks whether any discount reflects temporary pessimism or weaker economics."}
-            </p>
-          </div>
-          <div className="analysis-company">
-            <span>{data?.identity.company ?? canonicalSymbol}</span>
-            <strong>{money(price, data?.identity.currency ?? "USD")}</strong>
-            <button
-              type="button"
-              onClick={() => void load(true)}
-              aria-label="Refresh analysis"
-              disabled={refreshing}
-            >
-              <RefreshCw
-                aria-hidden="true"
-                className={refreshing ? "is-spinning" : ""}
-                size={16}
-              />
-            </button>
-          </div>
-        </header>
+        <ResearchPanelHeader
+          {...panelHeader}
+          action={panelRefreshAction}
+        />
 
         <section className="analysis-value-card" aria-labelledby="value-result">
           <div>
@@ -328,7 +324,7 @@ export default function ValueAnalysisClient({
           </Link>
         </section>
       </div>
-    </main>
+    </div>
   );
 }
 

@@ -147,7 +147,8 @@
   text-transform: uppercase;
 }
 
-.analysis-hero h1 {
+.analysis-hero h1,
+.analysis-hero h2 {
   margin: 0;
   font-size: clamp(39px, 6vw, 68px);
   font-weight: 720;

@@ -10,7 +10,7 @@
   --security-border: rgba(0, 0, 0, 0.075);
   --security-card: #ffffff;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-x: clip;
   position: relative;
   background: #ffffff;
   color: var(--security-ink);

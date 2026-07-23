@@ -3,17 +3,14 @@
 import Link from "next/link";
 import {
   Activity,
-  ArrowDownRight,
   ArrowLeft,
   ArrowRight,
-  ArrowUpRight,
   BarChart3,
   BookOpen,
   Building2,
   Check,
   ChevronRight,
   CircleDollarSign,
-  Clock3,
   Database,
   FileText,
   Gauge,
@@ -42,7 +39,8 @@ import {
   OwnershipChart,
   ValuationHistoryChart,
 } from "./SecurityCharts";
-import { SecurityResearchNav } from "./SecurityResearchNav";
+import ResearchPanelHeader from "./ResearchPanelHeader";
+import { useSecurityResearchShell } from "./SecurityResearchShell";
 import type { Metric, PeersResponse, SecuritySummary, SeriesResponse } from "./types";
 
 type Props = {
@@ -57,6 +55,13 @@ type WorkspaceJournal = {
   sentiment: Sentiment;
   watchPrice: number | null;
 };
+
+const overviewPanelHeader = {
+  eyebrow: "Opportunity overview",
+  title: "Is today's price worth the risk?",
+  description:
+    "Connect entry price, estimated value, financial resilience, ownership, and your own watch level before judging the opportunity.",
+} as const;
 
 const money = (value: number | null, currency = "USD", compact = false) => {
   if (value === null || !Number.isFinite(value)) return "—";
@@ -100,22 +105,33 @@ const unwrapResponse = async (response: Response) => {
 
 export default function SecuritySummaryClient({ exchange, symbol }: Props) {
   const canonicalSymbol = symbol.toUpperCase();
-  const [summary, setSummary] = useState<SecuritySummary | null>(null);
+  const {
+    summary,
+    loading,
+    refreshing,
+    error,
+    notFound,
+    refreshSummary,
+    note,
+    setNote,
+    noteSaved,
+    setNoteSaved,
+    sentiment,
+    setSentiment,
+    watchSaved,
+    setWatchSaved,
+    watchInput,
+    setWatchInput,
+    workspaceError,
+    setWorkspaceError,
+    journalLoaded,
+    setJournalLoaded,
+  } = useSecurityResearchShell();
   const [series, setSeries] = useState<SeriesResponse | null>(null);
   const [priceSeries, setPriceSeries] = useState<SeriesResponse | null>(null);
   const [peers, setPeers] = useState<PeersResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notFound, setNotFound] = useState(false);
-  const [note, setNote] = useState("");
-  const [noteSaved, setNoteSaved] = useState(false);
-  const [sentiment, setSentiment] = useState<Sentiment>("neutral");
-  const [watchSaved, setWatchSaved] = useState<number | null>(null);
-  const [watchInput, setWatchInput] = useState("");
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [overviewRefreshing, setOverviewRefreshing] = useState(false);
 
-  const summaryPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/summary`;
   const seriesPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/series?group=valuation&range=max`;
   const priceSeriesPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/series?group=price&range=3m`;
   const peersPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/peers`;
@@ -147,44 +163,12 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
       setWorkspaceError(null);
       return payload.journal;
     },
-    [applyJournal, journalPath],
-  );
-
-  const loadSummary = useCallback(
-    async (background = false) => {
-      if (background) setRefreshing(true);
-      else setLoading(true);
-      try {
-        const payload = await unwrapResponse(await fetch(summaryPath, { cache: "no-store" }));
-        setSummary(normalizeSummary(payload, exchange, symbol));
-        setNotFound(false);
-        setError(null);
-      } catch (reason) {
-        if (reason instanceof Error && "status" in reason && reason.status === 404) {
-          setNotFound(true);
-          setError(null);
-          return;
-        }
-        setSummary((current) => current ?? normalizeSummary({}, exchange, symbol));
-        setError(reason instanceof Error ? reason.message : "Data is temporarily unavailable");
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [exchange, summaryPath, symbol],
+    [applyJournal, journalPath, setWorkspaceError],
   );
 
   useEffect(() => {
-    const initial = window.setTimeout(() => void loadSummary(), 0);
-    const interval = window.setInterval(() => void loadSummary(true), 30_000);
-    return () => {
-      window.clearTimeout(initial);
-      window.clearInterval(interval);
-    };
-  }, [loadSummary]);
+    if (journalLoaded) return;
 
-  useEffect(() => {
     let cancelled = false;
 
     async function loadJournal() {
@@ -246,6 +230,8 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             "Your private research workspace is temporarily unavailable.",
           );
         }
+      } finally {
+        if (!cancelled) setJournalLoaded(true);
       }
     }
 
@@ -253,27 +239,75 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [applyJournal, exchange, journalPath, persistJournal, symbol]);
+  }, [
+    applyJournal,
+    exchange,
+    journalLoaded,
+    journalPath,
+    persistJournal,
+    setJournalLoaded,
+    setWorkspaceError,
+    symbol,
+  ]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.allSettled([
-      fetch(seriesPath, { signal: controller.signal, cache: "no-store" })
-        .then(unwrapResponse)
-        .then((payload) => setSeries(normalizeSeries(payload, symbol))),
-      fetch(priceSeriesPath, { signal: controller.signal, cache: "no-store" })
-        .then(unwrapResponse)
-        .then((payload) => setPriceSeries(normalizeSeries(payload, symbol))),
-      fetch(peersPath, { signal: controller.signal, cache: "no-store" })
-        .then(unwrapResponse)
-        .then((payload) => setPeers(normalizePeers(payload, symbol))),
-    ]).then((results) => {
+  const loadOverviewData = useCallback(
+    async (signal?: AbortSignal) => {
+      const results = await Promise.allSettled([
+        fetch(seriesPath, { signal, cache: "no-store" })
+          .then(unwrapResponse)
+          .then((payload) => setSeries(normalizeSeries(payload, symbol))),
+        fetch(priceSeriesPath, { signal, cache: "no-store" })
+          .then(unwrapResponse)
+          .then((payload) => setPriceSeries(normalizeSeries(payload, symbol))),
+        fetch(peersPath, { signal, cache: "no-store" })
+          .then(unwrapResponse)
+          .then((payload) => setPeers(normalizePeers(payload, symbol))),
+      ]);
+      if (signal?.aborted) return;
       if (results[0].status === "rejected") setSeries(null);
       if (results[1].status === "rejected") setPriceSeries(null);
       if (results[2].status === "rejected") setPeers(normalizePeers({}, symbol));
-    });
-    return () => controller.abort();
-  }, [peersPath, priceSeriesPath, seriesPath, symbol]);
+    },
+    [peersPath, priceSeriesPath, seriesPath, symbol],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const initial = window.setTimeout(
+      () => void loadOverviewData(controller.signal),
+      0,
+    );
+    return () => {
+      window.clearTimeout(initial);
+      controller.abort();
+    };
+  }, [loadOverviewData]);
+
+  const refreshOverview = useCallback(async () => {
+    setOverviewRefreshing(true);
+    try {
+      await Promise.all([refreshSummary(true), loadOverviewData()]);
+    } finally {
+      setOverviewRefreshing(false);
+    }
+  }, [loadOverviewData, refreshSummary]);
+
+  const panelRefreshAction = (
+    <button
+      type="button"
+      className="security-research-panel-header__action"
+      aria-label="Refresh opportunity overview"
+      disabled={loading || refreshing || overviewRefreshing}
+      onClick={() => void refreshOverview()}
+    >
+      <RefreshCw
+        aria-hidden="true"
+        className={refreshing || overviewRefreshing ? "is-spinning" : undefined}
+        size={15}
+      />
+      Refresh overview
+    </button>
+  );
 
   const saveNote = async () => {
     try {
@@ -308,28 +342,33 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
     );
   };
 
-  if (loading && !summary) return <SecuritySkeleton symbol={canonicalSymbol} />;
+  if (loading && !summary) {
+    return (
+      <SecuritySkeleton
+        symbol={canonicalSymbol}
+        action={panelRefreshAction}
+      />
+    );
+  }
 
   if (notFound) {
     return (
-      <main className="security-page">
+      <div className="security-page">
         <div className="security-container">
           <Link className="security-back" href="/value-opportunities"><ArrowLeft aria-hidden="true" size={16} />Back to opportunities</Link>
           <section className="security-card security-not-found">
             <div className="security-card-icon"><Search aria-hidden="true" /></div>
             <p className="security-eyebrow">Security not found</p>
-            <h1>{canonicalSymbol} isn’t in the local catalog</h1>
+            <h2>{canonicalSymbol} isn’t in the local catalog</h2>
             <p>Check the exchange and ticker, or return to the opportunity finder to choose a supported security.</p>
             <Link href="/value-opportunities">Open opportunity finder <ArrowRight aria-hidden="true" size={16} /></Link>
           </section>
         </div>
-      </main>
+      </div>
     );
   }
 
   const data = summary ?? normalizeSummary({}, exchange, symbol);
-  const isPositive = (data.quote.changePercent.value ?? 0) >= 0;
-  const changeClass = isPositive ? "is-positive" : "is-negative";
   const valuationSeries = series?.series.some((line) => line.points.length) ? series : null;
   const netMargin = data.derived.netMargin.value;
   const fcfMargin = data.derived.freeCashFlowMargin.value;
@@ -338,20 +377,15 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
     : "";
 
   return (
-    <main className="security-page">
+    <div className="security-page">
       <div className="security-orb security-orb-one" aria-hidden="true" />
       <div className="security-orb security-orb-two" aria-hidden="true" />
       <div className="security-container">
-        <Link className="security-back" href="/value-opportunities">
-          <ArrowLeft aria-hidden="true" size={16} />
-          Back to opportunities
-        </Link>
-
         {error ? (
           <div className="security-data-notice" role="status">
             <Database aria-hidden="true" size={16} />
             <span><strong>Some data is unavailable.</strong> Available values remain visible; missing values are left blank.</span>
-            <button type="button" onClick={() => void loadSummary(true)}>Try again</button>
+            <button type="button" onClick={() => void refreshSummary(true)}>Try again</button>
           </div>
         ) : null}
         {workspaceError ? (
@@ -361,48 +395,11 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           </div>
         ) : null}
 
-        <header className="security-hero">
-          <div className="security-identity">
-            <div className="security-monogram" aria-hidden="true">{canonicalSymbol.slice(0, 2)}</div>
-            <div>
-              <div className="security-eyebrow-row">
-                <span className="security-ticker">{data.identity.exchange}:{data.identity.symbol}</span>
-              </div>
-              <h1>{data.identity.company.value ?? canonicalSymbol} opportunity overview</h1>
-              <p className="security-meta-line">
-                Does today&apos;s price offer enough margin of safety for this
-                business&apos;s quality and risks?
-              </p>
-            </div>
-          </div>
-          <div className="security-quote">
-            <div className="security-quote-top">
-              <span>{money(data.quote.price.value, data.identity.currency)}</span>
-              <span className={`security-change ${changeClass}`}>
-                {isPositive ? <ArrowUpRight aria-hidden="true" /> : <ArrowDownRight aria-hidden="true" />}
-                {percent(data.quote.changePercent.value, 2)}
-              </span>
-            </div>
-            <div className="security-quote-meta">
-              <span>Market cap {money(data.quote.marketCap.value, data.identity.currency, true)}</span>
-              <span className="security-freshness">
-                <Clock3 aria-hidden="true" size={13} />
-                {freshness(data.asOf)}
-              </span>
-              <button
-                type="button"
-                className="security-icon-button"
-                onClick={() => void loadSummary(true)}
-                aria-label="Refresh quote"
-                disabled={refreshing}
-              >
-                <RefreshCw aria-hidden="true" className={refreshing ? "is-spinning" : ""} size={16} />
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <SecurityResearchNav exchange={exchange} symbol={symbol} active="summary" />
+        <ResearchPanelHeader
+          view="overview"
+          {...overviewPanelHeader}
+          action={panelRefreshAction}
+        />
 
         {companyDescription ? (
           <div className="security-company-description">
@@ -764,7 +761,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           For research only; this page is not investment advice or a recommendation. Data may be delayed or incomplete, and missing fields remain blank. Verify company filings and consider your own objectives and risk tolerance before acting.
         </p>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -942,16 +939,25 @@ function Unavailable({ message }: { message: string }) {
   return <div className="security-unavailable"><Info aria-hidden="true" size={17} /><span>{message}</span></div>;
 }
 
-function SecuritySkeleton({ symbol }: { symbol: string }) {
+function SecuritySkeleton({
+  symbol,
+  action,
+}: {
+  symbol: string;
+  action: React.ReactNode;
+}) {
   return (
-    <main className="security-page">
+    <div className="security-page">
       <div className="security-container security-skeleton" aria-busy="true" aria-label={`Loading ${symbol} summary`}>
-        <div className="security-skeleton-line is-short" />
-        <div className="security-skeleton-hero"><div /><div /></div>
+        <ResearchPanelHeader
+          view="overview"
+          {...overviewPanelHeader}
+          action={action}
+        />
         <div className="security-skeleton-card" />
         <div className="security-skeleton-grid"><div /><div /></div>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -976,15 +982,4 @@ function currencySymbol(currency: string) {
   } catch {
     return "$";
   }
-}
-
-function freshness(asOf: string | null) {
-  if (!asOf) return "Latest available";
-  const timestamp = new Date(asOf).getTime();
-  if (!Number.isFinite(timestamp)) return asOf;
-  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
-  if (minutes < 1) return "Updated just now";
-  if (minutes < 60) return `Updated ${minutes}m ago`;
-  if (minutes < 24 * 60) return `Updated ${Math.floor(minutes / 60)}h ago`;
-  return `As of ${new Date(timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }

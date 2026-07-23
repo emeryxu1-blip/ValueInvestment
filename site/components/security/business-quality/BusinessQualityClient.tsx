@@ -1,16 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import {
   AlertTriangle,
-  ArrowDownRight,
-  ArrowLeft,
-  ArrowUpRight,
   Check,
   CheckCircle2,
   ChevronRight,
   CircleDollarSign,
-  Clock3,
   Gauge,
   HelpCircle,
   Info,
@@ -37,7 +32,7 @@ import type {
   OpportunitySignal,
 } from "@/lib/security/business-quality";
 import { normalizeSummary } from "../data";
-import { SecurityResearchNav } from "../SecurityResearchNav";
+import ResearchPanelHeader from "../ResearchPanelHeader";
 import {
   EarningsBridge,
   ProfitabilityTrendChart,
@@ -46,6 +41,14 @@ import {
 type Props = {
   exchange: string;
   symbol: string;
+};
+
+const qualityPanelHeader = {
+  view: "quality" as const,
+  eyebrow: "Quality check",
+  title: "Can this business protect and grow owner earnings?",
+  description:
+    "Test whether durable margins, disciplined reinvestment, and cash-backed earnings can protect owners through a full business cycle.",
 };
 
 const money = (
@@ -77,21 +80,6 @@ const signedPercent = (value: number | null) =>
     ? "—"
     : `${value > 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 
-const freshness = (asOf: string | null) => {
-  if (!asOf) return "Latest available";
-  const timestamp = Date.parse(asOf);
-  if (!Number.isFinite(timestamp)) return "Latest available";
-  const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
-  if (minutes < 1) return "Updated just now";
-  if (minutes < 60) return `Updated ${minutes}m ago`;
-  if (minutes < 24 * 60) return `Updated ${Math.floor(minutes / 60)}h ago`;
-  return `As of ${new Date(timestamp).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })}`;
-};
-
 const unwrapResponse = async (response: Response) => {
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -108,7 +96,6 @@ const unwrapResponse = async (response: Response) => {
 };
 
 export default function BusinessQualityClient({ exchange, symbol }: Props) {
-  const canonicalExchange = exchange.toUpperCase();
   const canonicalSymbol = symbol.toUpperCase();
   const [quality, setQuality] = useState<BusinessQualityResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -150,14 +137,40 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
     };
   }, [loadData]);
 
+  const panelRefreshAction = (
+    <button
+      type="button"
+      className="security-research-panel-header__action"
+      aria-label="Refresh business-quality data"
+      disabled={loading || refreshing}
+      onClick={() => void loadData(quality !== null)}
+    >
+      <RefreshCw
+        aria-hidden="true"
+        className={refreshing ? "is-spinning" : undefined}
+        size={15}
+      />
+      Refresh quality
+    </button>
+  );
+
   if (loading && quality === null) {
-    return <BusinessQualitySkeleton symbol={canonicalSymbol} />;
+    return (
+      <BusinessQualitySkeleton
+        symbol={canonicalSymbol}
+        action={panelRefreshAction}
+      />
+    );
   }
 
   if (quality === null) {
     return (
-      <main className="profitability-page">
+      <div className="profitability-page">
         <div className="profitability-container">
+          <ResearchPanelHeader
+            {...qualityPanelHeader}
+            action={panelRefreshAction}
+          />
           <div className="profitability-notice" role="alert">
             <AlertTriangle aria-hidden="true" size={17} />
             <span>
@@ -168,7 +181,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
             </button>
           </div>
         </div>
-      </main>
+      </div>
     );
   }
 
@@ -184,39 +197,13 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
     canonicalSymbol;
   const currency =
     profitability?.identity.currency ?? data.identity.currency;
-  const quotePrice =
-    profitability?.quote.price ?? data.quote.price.value;
-  const quoteChange =
-    profitability?.quote.changePercent ??
-    (data.quote.changePercent.value === null
-      ? null
-      : data.quote.changePercent.value / 100);
-  const quoteAsOf = profitability?.asOf ?? data.asOf;
-  const isPositive = (quoteChange ?? 0) >= 0;
   const scoreStyle = {
     "--quality-score-angle": `${(analysis.score ?? 0) * 3.6}deg`,
   } as CSSProperties;
 
   return (
-    <main className="profitability-page">
+    <div className="profitability-page">
       <div className="profitability-container">
-        <div className="profitability-context-links">
-          <Link
-            className="profitability-back"
-            href={`/value-opportunities/${encodeURIComponent(exchange.toLowerCase())}/${encodeURIComponent(symbol.toLowerCase())}/overview`}
-          >
-            <ArrowLeft aria-hidden="true" size={16} />
-            Back to opportunity overview
-          </Link>
-          <Link
-            className="profitability-screener-link"
-            href="/value-opportunities"
-          >
-            Opportunity finder
-            <ChevronRight aria-hidden="true" size={15} />
-          </Link>
-        </div>
-
         {error ? (
           <div className="profitability-notice" role="status">
             <AlertTriangle aria-hidden="true" size={17} />
@@ -227,76 +214,10 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
           </div>
         ) : null}
 
-        <header className="profitability-hero">
-          <div className="profitability-hero-main">
-            <div className="profitability-monogram" aria-hidden="true">
-              {canonicalSymbol.slice(0, 2)}
-            </div>
-            <div>
-              <p className="profitability-symbol">
-                {canonicalSymbol} · {canonicalExchange}
-              </p>
-              <h1>Business quality check</h1>
-              <p className="profitability-subtitle">
-                <strong>{companyName}</strong>
-                <span aria-hidden="true"> · </span>
-                Can this business protect and grow owner earnings?
-              </p>
-            </div>
-          </div>
-          <div className="profitability-quote">
-            <div>
-              <strong>
-                {money(
-                  quotePrice,
-                  currency,
-                )}
-              </strong>
-              {quoteChange !== null ? (
-                <span
-                  className={isPositive ? "is-positive" : "is-negative"}
-                >
-                  {isPositive ? (
-                    <ArrowUpRight aria-hidden="true" size={15} />
-                  ) : (
-                    <ArrowDownRight aria-hidden="true" size={15} />
-                  )}
-                  {signedPercent(quoteChange)}
-                </span>
-              ) : null}
-            </div>
-            <p>
-              <Clock3 aria-hidden="true" size={13} />
-              {freshness(quoteAsOf)}
-              <button
-                type="button"
-                aria-label="Refresh business-quality data"
-                disabled={refreshing}
-                onClick={() => void loadData(true)}
-              >
-                <RefreshCw
-                  aria-hidden="true"
-                  className={refreshing ? "is-spinning" : undefined}
-                  size={14}
-                />
-              </button>
-            </p>
-          </div>
-        </header>
-
-        <SecurityResearchNav
-          exchange={exchange}
-          symbol={symbol}
-          active="business-quality"
+        <ResearchPanelHeader
+          {...qualityPanelHeader}
+          action={panelRefreshAction}
         />
-
-        <p className="profitability-introduction">
-          Value investing is not only about paying a low multiple. Durable
-          margins, disciplined reinvestment and earnings that become cash help
-          protect owner earnings through a full cycle. Study those economics
-          separately from price, then decide whether quality and valuation
-          create a real margin of safety together.
-        </p>
 
         <div className="profitability-overview-grid">
           <section
@@ -820,7 +741,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
           </div>
         </section>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -968,26 +889,24 @@ function Unavailable({ children }: { children: ReactNode }) {
   );
 }
 
-function BusinessQualitySkeleton({ symbol }: { symbol: string }) {
+function BusinessQualitySkeleton({
+  symbol,
+  action,
+}: {
+  symbol: string;
+  action: ReactNode;
+}) {
   return (
-    <main className="profitability-page">
+    <div className="profitability-page">
       <div className="profitability-container profitability-skeleton">
         <p className="visually-hidden">Loading {symbol} business quality</p>
-        <div className="profitability-skeleton-line is-short" />
-        <div className="profitability-skeleton-hero">
-          <div className="profitability-skeleton-logo" />
-          <div>
-            <div className="profitability-skeleton-line is-label" />
-            <div className="profitability-skeleton-line is-title" />
-            <div className="profitability-skeleton-line is-medium" />
-          </div>
-        </div>
+        <ResearchPanelHeader {...qualityPanelHeader} action={action} />
         <div className="profitability-skeleton-grid">
           <div />
           <div />
         </div>
         <div className="profitability-skeleton-block" />
       </div>
-    </main>
+    </div>
   );
 }

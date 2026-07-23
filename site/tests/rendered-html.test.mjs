@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { after, before } from "node:test";
 import { startCloudflareWorker } from "./helpers/cloudflare-worker.mjs";
+import { assertResearchPanelHeader } from "./helpers/research-panel.mjs";
 
 let worker;
 
@@ -35,6 +36,42 @@ async function assertAppNotFound(response) {
   // 200, but must still render the application's explicit not-found state.
   assert.ok(response.status === 200 || response.status === 404);
   assert.match(html, /We couldn’t find that listing\./);
+}
+
+function assertResearchShell(html, activePathname) {
+  assert.match(
+    html,
+    /<title>MSFT Value opportunity overview · Value Lens<\/title>/i,
+  );
+  assert.ok(
+    html.includes(
+      `<link rel="canonical" href="http://localhost:3001${activePathname}"/>`,
+    ),
+    `expected canonical metadata for ${activePathname}`,
+  );
+  assert.match(
+    html,
+    /<h1>Microsoft(?:<!-- -->)? opportunity overview<\/h1>/i,
+  );
+
+  const navigation = html.match(
+    /<nav\b[^>]*class="security-research-nav"[^>]*>[\s\S]*?<\/nav>/i,
+  );
+  assert.ok(navigation, "expected the persistent company research navigation");
+  assert.match(navigation[0], /role="tablist"/i);
+
+  const tabs = navigation[0].match(/<a\b[^>]*role="tab"[^>]*>/gi) ?? [];
+  assert.equal(tabs.length, 4);
+
+  const selectedTabs = tabs.filter((tab) =>
+    /aria-selected="true"/i.test(tab),
+  );
+  assert.equal(selectedTabs.length, 1);
+  assert.ok(
+    selectedTabs[0].includes(`href="${activePathname}"`),
+    `expected ${activePathname} to be the selected research tab`,
+  );
+  assert.match(selectedTabs[0], /aria-current="page"/i);
 }
 
 test("renders the complete screener content without copied site chrome or paywall", async () => {
@@ -79,7 +116,16 @@ test("renders the dynamic security shell and rejects unsupported routes", async 
   );
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /MSFT Value opportunity overview · Value Lens/);
+  assertResearchShell(
+    html,
+    "/value-opportunities/nasdaq/msft/overview",
+  );
+  assertResearchPanelHeader(html, {
+    view: "overview",
+    eyebrow: "Opportunity overview",
+    title: "Is today's price worth the risk?",
+    action: "Refresh overview",
+  });
   assert.match(html, /Loading MSFT summary/);
   assert.match(html, /security-skeleton/);
   assert.doesNotMatch(html, /AlphaSpread|Start free trial|paywall/i);
@@ -95,6 +141,14 @@ test("renders the dynamic security shell and rejects unsupported routes", async 
     legacy,
     "/value-opportunities/nasdaq/msft/overview",
   );
+
+  const alias = await request(
+    "/value-opportunities/NASDAQGS/MSFT/overview",
+  );
+  await assertAppRedirect(
+    alias,
+    "/value-opportunities/nasdaq/msft/overview",
+  );
 });
 
 test("renders renamed valuation routes without copied global chrome", async () => {
@@ -103,7 +157,16 @@ test("renders renamed valuation routes without copied global chrome", async () =
   );
   assert.equal(cashFlow.status, 200);
   const cashFlowHtml = await cashFlow.text();
-  assert.match(cashFlowHtml, /MSFT Cash-flow value opportunity/);
+  assertResearchShell(
+    cashFlowHtml,
+    "/value-opportunities/nasdaq/msft/cash-flow",
+  );
+  assertResearchPanelHeader(cashFlowHtml, {
+    view: "cash-flow",
+    eyebrow: "Cash-flow safety",
+    title: "Cash-flow margin of safety",
+    action: "Refresh analysis",
+  });
   assert.match(
     cashFlowHtml,
     /Preparing[\s\S]*cash-flow margin of safety[\s\S]*for[\s\S]*MSFT/,
@@ -115,12 +178,37 @@ test("renders renamed valuation routes without copied global chrome", async () =
   );
   assert.equal(relative.status, 200);
   const relativeHtml = await relative.text();
-  assert.match(relativeHtml, /MSFT Market comparison opportunity/);
+  assertResearchShell(
+    relativeHtml,
+    "/value-opportunities/nasdaq/msft/market-comparison",
+  );
+  assertResearchPanelHeader(relativeHtml, {
+    view: "market-expectations",
+    eyebrow: "Market expectations",
+    title: "Market expectation check",
+    action: "Refresh analysis",
+  });
   assert.match(
     relativeHtml,
     /Preparing[\s\S]*market expectation check[\s\S]*for[\s\S]*MSFT/,
   );
   assert.doesNotMatch(relativeHtml, /AlphaSpread|AInvest|TradingView|<footer\b/i);
+
+  const cashFlowAlias = await request(
+    "/value-opportunities/NASDAQGS/MSFT/cash-flow",
+  );
+  await assertAppRedirect(
+    cashFlowAlias,
+    "/value-opportunities/nasdaq/msft/cash-flow",
+  );
+
+  const relativeAlias = await request(
+    "/value-opportunities/NASDAQGS/MSFT/market-comparison",
+  );
+  await assertAppRedirect(
+    relativeAlias,
+    "/value-opportunities/nasdaq/msft/market-comparison",
+  );
 
   const unsupported = await request(
     "/value-opportunities/nasdaq/notareal/cash-flow",
