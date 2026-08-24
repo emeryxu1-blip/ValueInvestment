@@ -42,6 +42,13 @@ test("builds view-specific analysis requests with stable unique mapping keys", (
     ),
   );
   assert.ok(
+    dcf.indicator.some(
+      (indicator) =>
+        indicator.id === "stockdiag_fundamental_future_growthforecast" &&
+        indicator.req_unique_id === "growthForecastModule",
+    ),
+  );
+  assert.ok(
     relative.indicator.some(
       (indicator) =>
         indicator.id === "ev_ebitda_ratio_ttm" &&

@@ -8,59 +8,45 @@ import {
   BarChart3,
   BookOpen,
   Building2,
-  Check,
   ChevronRight,
   CircleDollarSign,
   Database,
   FileText,
-  Gauge,
   HeartPulse,
   Info,
-  Landmark,
   LineChart,
   MessageSquareText,
-  PieChart as PieChartIcon,
   RefreshCw,
-  Save,
   Scale,
   Search,
   ShieldCheck,
-  Target,
   TrendingUp,
-  Users,
   WalletCards,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { normalizePeers, normalizeSeries, normalizeSummary, providerNeutralText } from "./data";
+import { normalizePeers, normalizeSeries, providerNeutralText } from "./data";
 import {
-  CashAndDebtChart,
   CashFlowWaterfall,
   FinancialHistoryChart,
-  OwnershipChart,
   ValuationHistoryChart,
 } from "./SecurityCharts";
 import ResearchPanelHeader from "./ResearchPanelHeader";
 import { useSecurityResearchShell } from "./SecurityResearchShell";
 import type { Metric, PeersResponse, SecuritySummary, SeriesResponse } from "./types";
+import CalculationDisclosure from "./CalculationDisclosure";
 
 type Props = {
   exchange: string;
   symbol: string;
 };
 
-type Sentiment = "bear" | "neutral" | "bull";
 type DisplayMetric = Pick<Metric<number>, "value" | "unit">;
-type WorkspaceJournal = {
-  note: string;
-  sentiment: Sentiment;
-  watchPrice: number | null;
-};
 
 const overviewPanelHeader = {
   eyebrow: "Opportunity overview",
   title: "Is today's price worth the risk?",
   description:
-    "Connect entry price, estimated value, financial resilience, ownership, and your own watch level before judging the opportunity.",
+    "Connect entry price, estimated value, cash generation, and financial resilience before judging the opportunity.",
 } as const;
 
 const money = (value: number | null, currency = "USD", compact = false) => {
@@ -86,8 +72,8 @@ const percent = (value: number | null, digits = 1, isRatio = false) => {
 const multiple = (value: number | null) =>
   value === null || !Number.isFinite(value) ? "—" : `${value.toFixed(1)}×`;
 
-const storageKey = (exchange: string, symbol: string, field: string) =>
-  `value-lens:${exchange.toLowerCase()}:${symbol.toLowerCase()}:${field}`;
+const asOfDate = (value: string | null | undefined) =>
+  value ? value.slice(0, 10) : "Not supplied";
 
 const unwrapResponse = async (response: Response) => {
   const payload = await response.json().catch(() => null);
@@ -112,20 +98,6 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
     error,
     notFound,
     refreshSummary,
-    note,
-    setNote,
-    noteSaved,
-    setNoteSaved,
-    sentiment,
-    setSentiment,
-    watchSaved,
-    setWatchSaved,
-    watchInput,
-    setWatchInput,
-    workspaceError,
-    setWorkspaceError,
-    journalLoaded,
-    setJournalLoaded,
   } = useSecurityResearchShell();
   const [series, setSeries] = useState<SeriesResponse | null>(null);
   const [priceSeries, setPriceSeries] = useState<SeriesResponse | null>(null);
@@ -135,120 +107,6 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
   const seriesPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/series?group=valuation&range=max`;
   const priceSeriesPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/series?group=price&range=3m`;
   const peersPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/peers`;
-  const journalPath = `/api/workspace/journal/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}`;
-
-  const applyJournal = useCallback((journal: WorkspaceJournal) => {
-    setNote(journal.note);
-    setSentiment(journal.sentiment);
-    setWatchSaved(journal.watchPrice);
-    setWatchInput(
-      journal.watchPrice === null ? "" : journal.watchPrice.toFixed(2),
-    );
-  }, [setNote, setSentiment, setWatchInput, setWatchSaved]);
-
-  const persistJournal = useCallback(
-    async (journal: WorkspaceJournal) => {
-      const response = await fetch(journalPath, {
-        method: "PUT",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(journal),
-      });
-      const payload = (await unwrapResponse(response)) as {
-        journal: WorkspaceJournal;
-      };
-      applyJournal(payload.journal);
-      setWorkspaceError(null);
-      return payload.journal;
-    },
-    [applyJournal, journalPath, setWorkspaceError],
-  );
-
-  useEffect(() => {
-    if (journalLoaded) return;
-
-    let cancelled = false;
-
-    async function loadJournal() {
-      try {
-        const response = await fetch(journalPath, {
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        });
-        const payload = (await unwrapResponse(response)) as {
-          journal: WorkspaceJournal | null;
-        };
-        let journal = payload.journal;
-
-        if (journal === null) {
-          const localNote =
-            window.localStorage.getItem(
-              storageKey(exchange, symbol, "note"),
-            ) ?? "";
-          const localSentiment = window.localStorage.getItem(
-            storageKey(exchange, symbol, "sentiment"),
-          );
-          const localWatch = Number(
-            window.localStorage.getItem(
-              storageKey(exchange, symbol, "watch"),
-            ),
-          );
-          const migrated: WorkspaceJournal = {
-            note: localNote,
-            sentiment:
-              localSentiment === "bear" ||
-              localSentiment === "bull" ||
-              localSentiment === "neutral"
-                ? localSentiment
-                : "neutral",
-            watchPrice:
-              Number.isFinite(localWatch) && localWatch > 0
-                ? localWatch
-                : null,
-          };
-          if (
-            migrated.note ||
-            migrated.sentiment !== "neutral" ||
-            migrated.watchPrice !== null
-          ) {
-            journal = await persistJournal(migrated);
-            for (const field of ["note", "sentiment", "watch"]) {
-              window.localStorage.removeItem(
-                storageKey(exchange, symbol, field),
-              );
-            }
-          }
-        }
-
-        if (!cancelled && journal) applyJournal(journal);
-        if (!cancelled) setWorkspaceError(null);
-      } catch {
-        if (!cancelled) {
-          setWorkspaceError(
-            "Your private research workspace is temporarily unavailable.",
-          );
-        }
-      } finally {
-        if (!cancelled) setJournalLoaded(true);
-      }
-    }
-
-    void loadJournal();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    applyJournal,
-    exchange,
-    journalLoaded,
-    journalPath,
-    persistJournal,
-    setJournalLoaded,
-    setWorkspaceError,
-    symbol,
-  ]);
 
   const loadOverviewData = useCallback(
     async (signal?: AbortSignal) => {
@@ -272,6 +130,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
   );
 
   useEffect(() => {
+    if (!summary || !summary.applicability.companyAnalysis) return;
     const controller = new AbortController();
     const initial = window.setTimeout(
       () => void loadOverviewData(controller.signal),
@@ -281,16 +140,23 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
       window.clearTimeout(initial);
       controller.abort();
     };
-  }, [loadOverviewData]);
+  }, [loadOverviewData, summary]);
 
   const refreshOverview = useCallback(async () => {
     setOverviewRefreshing(true);
     try {
-      await Promise.all([refreshSummary(true), loadOverviewData()]);
+      await refreshSummary(true);
+      if (summary?.applicability.companyAnalysis) {
+        await loadOverviewData();
+      }
     } finally {
       setOverviewRefreshing(false);
     }
-  }, [loadOverviewData, refreshSummary]);
+  }, [
+    loadOverviewData,
+    refreshSummary,
+    summary?.applicability.companyAnalysis,
+  ]);
 
   const panelRefreshAction = (
     <button
@@ -308,39 +174,6 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
       Refresh overview
     </button>
   );
-
-  const saveNote = async () => {
-    try {
-      await persistJournal({ note, sentiment, watchPrice: watchSaved });
-      setNoteSaved(true);
-      window.setTimeout(() => setNoteSaved(false), 1800);
-    } catch {
-      setWorkspaceError(
-        "Your private research workspace is temporarily unavailable.",
-      );
-    }
-  };
-
-  const changeSentiment = (value: Sentiment) => {
-    setSentiment(value);
-    void persistJournal({ note, sentiment: value, watchPrice: watchSaved }).catch(
-      () =>
-        setWorkspaceError(
-          "Your private research workspace is temporarily unavailable.",
-        ),
-    );
-  };
-
-  const saveWatch = () => {
-    const parsed = Number(watchInput);
-    if (!Number.isFinite(parsed) || parsed <= 0) return;
-    setWatchSaved(parsed);
-    void persistJournal({ note, sentiment, watchPrice: parsed }).catch(() =>
-      setWorkspaceError(
-        "Your private research workspace is temporarily unavailable.",
-      ),
-    );
-  };
 
   if (loading && !summary) {
     return (
@@ -368,7 +201,53 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
     );
   }
 
-  const data = summary ?? normalizeSummary({}, exchange, symbol);
+  if (!summary) {
+    return (
+      <div className="security-page">
+        <div className="security-container">
+          <ResearchPanelHeader
+            view="overview"
+            {...overviewPanelHeader}
+            action={panelRefreshAction}
+          />
+          <section className="security-card security-not-found" role="status">
+            <div className="security-card-icon"><Database aria-hidden="true" /></div>
+            <p className="security-eyebrow">Company data unavailable</p>
+            <h2>We could not load {canonicalSymbol}&apos;s current figures</h2>
+            <p>{error ?? "The latest company figures are temporarily unavailable. No substitute values have been inserted."}</p>
+            <button className="security-research-panel-header__action" type="button" onClick={() => void refreshOverview()}>
+              <RefreshCw aria-hidden="true" size={16} />
+              Try again
+            </button>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
+  const data = summary;
+  if (!data.applicability.companyAnalysis) {
+    return (
+      <div className="security-page">
+        <div className="security-container">
+          <ResearchPanelHeader
+            view="overview"
+            {...overviewPanelHeader}
+            action={panelRefreshAction}
+          />
+          <section className="security-card security-not-found" role="status">
+            <div className="security-card-icon"><Info aria-hidden="true" /></div>
+            <p className="security-eyebrow">Analysis not applicable</p>
+            <h2>Company analysis is unavailable for {canonicalSymbol}</h2>
+            <p>
+              {data.applicability.reason ??
+                "This security type does not support the company valuation and business-quality models."}
+            </p>
+          </section>
+        </div>
+      </div>
+    );
+  }
   const valuationSeries = series?.series.some((line) => line.points.length) ? series : null;
   const netMargin = data.derived.netMargin.value;
   const fcfMargin = data.derived.freeCashFlowMargin.value;
@@ -388,13 +267,6 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             <button type="button" onClick={() => void refreshSummary(true)}>Try again</button>
           </div>
         ) : null}
-        {workspaceError ? (
-          <div className="security-data-notice" role="status">
-            <Database aria-hidden="true" size={16} />
-            <span>{workspaceError}</span>
-          </div>
-        ) : null}
-
         <ResearchPanelHeader
           view="overview"
           {...overviewPanelHeader}
@@ -418,77 +290,75 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           <ValuationHistoryChart data={priceSeries} kind="price" />
         </section>
 
-        <section className="security-value-grid" aria-labelledby="value-heading">
-          <div className="security-card security-value-card">
-            <SectionHeading
-              id="value-heading"
-              eyebrow="Opportunity range"
-              title="Is the discount wide enough?"
-              description="Compare estimated value with price to judge whether the possible upside adequately protects against uncertainty."
-              icon={<Scale aria-hidden="true" />}
-            />
-            <div className="security-value-hero">
-              <div>
-                <span>Estimated value</span>
-                <strong>{money(data.valuation.fairValue.value, data.identity.currency)}</strong>
-              </div>
-              <div className={`security-upside ${((data.valuation.mispricing.value ?? 0) >= 0) ? "is-positive" : "is-negative"}`}>
-                <span>Implied margin of safety</span>
-                <strong>{signedPercent(data.valuation.mispricing.value)}</strong>
-                <small>versus current price</small>
-              </div>
+        <section className="security-card security-value-card" aria-labelledby="value-heading">
+          <SectionHeading
+            id="value-heading"
+            eyebrow="Opportunity range"
+            title="Is the discount wide enough?"
+            description="Compare independently sourced and calculated valuation methods with price before judging the possible upside."
+            icon={<Scale aria-hidden="true" />}
+          />
+          <div className="security-value-hero">
+            <div>
+              <span>Estimated value</span>
+              <strong>{money(data.valuation.fairValue.value, data.identity.currency)}</strong>
             </div>
-            <ValuationRange data={data} />
-            <div className="security-valuation-methods">
-              <MetricBlock label="Cash-flow value" metric={data.valuation.dcfValue} formatter={(value) => money(value, data.identity.currency)} />
-              <MetricBlock label="Peer-based value" metric={data.valuation.peerValue} formatter={(value) => money(value, data.identity.currency)} />
-              <MetricBlock label="Analyst mean" metric={data.targets.mean} formatter={(value) => money(value, data.identity.currency)} />
+            <div className={`security-upside ${((data.valuation.mispricing.value ?? 0) >= 0) ? "is-positive" : "is-negative"}`}>
+              <span>Implied value gap</span>
+              <strong>{signedPercent(data.valuation.mispricing.value)}</strong>
+              <small>versus current price</small>
             </div>
           </div>
-
-          <aside className="security-card security-watch-card">
-            <div className="security-card-icon is-blue"><Target aria-hidden="true" /></div>
-            <p className="security-eyebrow">My margin of safety</p>
-            <h2>Set a watch level</h2>
-            <p>Keep a private price marker in your workspace. It does not send an alert.</p>
-            <label htmlFor="watch-level">Watch at or below</label>
-            <div className="security-input-combo">
-              <span>{currencySymbol(data.identity.currency)}</span>
-              <input
-                id="watch-level"
-                inputMode="decimal"
-                value={watchInput}
-                onChange={(event) => setWatchInput(event.target.value)}
-                placeholder={data.valuation.fairValue.value ? (data.valuation.fairValue.value * 0.85).toFixed(2) : "0.00"}
-                aria-describedby="watch-help"
-              />
-              <button type="button" onClick={saveWatch}>Save</button>
-            </div>
-            <p id="watch-help" className="security-helper">
-              {watchSaved === null
-                ? "A 15% discount to fair value is a common starting point, not a recommendation."
-                : `Saved at ${money(watchSaved, data.identity.currency)} in your workspace.`}
-            </p>
-            {watchSaved !== null && data.quote.price.value !== null ? (
-              <div className={`security-watch-state ${data.quote.price.value <= watchSaved ? "is-reached" : ""}`}>
-                <Gauge aria-hidden="true" size={17} />
-                {data.quote.price.value <= watchSaved
-                  ? "The current price is at or below your marker."
-                  : `${percent(data.quote.price.value / watchSaved - 1, 1, true)} above your marker.`}
-              </div>
-            ) : null}
-          </aside>
+          <ValuationRange data={data} />
+          <div className="security-valuation-methods">
+            <MetricBlock label="Provider DCF" metric={data.valuation.dcfValue} formatter={(value) => money(value, data.identity.currency)} />
+            <MetricBlock label="Peer-based value" metric={data.valuation.peerValue} formatter={(value) => money(value, data.identity.currency)} />
+          </div>
+          <CalculationDisclosure
+            title="How estimated value is selected"
+            summary="Implied value gap = selected value ÷ current price − 1"
+            badges={[
+              data.valuation.dcfValue.value !== null ? "Provider DCF selected" : data.valuation.peerValue.value !== null ? "Peer fallback selected" : "No value selected",
+              data.valuation.dcfValue.value !== null
+                ? `DCF ${asOfDate(data.valuation.dcfValue.asOf)}`
+                : data.valuation.peerValue.value !== null
+                  ? `Peers ${asOfDate(data.valuation.peerValue.asOf)}`
+                  : null,
+              `Price ${asOfDate(data.quote.price.asOf)}`,
+            ]}
+            formulas={[
+              { label: "Selected value", expression: "positive provider DCF; otherwise positive peer estimate" },
+              { label: "Value gap", expression: "selected value / positive current price - 1" },
+              { label: "Peer estimate", expression: "median of positive P/E, P/S and P/B implied values" },
+              { label: "Method value", expression: "peer median multiple × (price / company multiple)" },
+            ]}
+            items={[
+              { label: "Provider DCF", value: `Latest-dated positive value in the provider's DCF series. Its discount rate, terminal growth, forecast horizon, and per-share bridge are not included in the feed.` },
+              { label: "Interpretation", value: "This is implied upside/downside relative to price, not the conventional discount-to-fair-value denominator." },
+              { label: "Peer guard", value: "Each multiple needs at least three positive peer observations; the final estimate uses whichever valid methods remain." },
+            ]}
+          />
         </section>
 
         <section className="security-card" aria-labelledby="valuation-history-heading">
           <SectionHeading
             id="valuation-history-heading"
             eyebrow="Downside protection"
-            title="Has a margin of safety persisted?"
-            description="Use the price-to-value relationship and its persistence—not a single point estimate—to test whether the opportunity is durable."
+            title="How do provider price history and dated DCF values compare?"
+            description="This chart compares returned market-price history with the provider’s dated DCF value series; it is not a history of analyst estimate revisions."
             icon={<Activity aria-hidden="true" />}
           />
           <ValuationHistoryChart data={valuationSeries} />
+          <CalculationDisclosure
+            title="What this chart contains"
+            summary="Historical price points + provider-dated DCF value points"
+            badges={[`Series ${asOfDate(valuationSeries?.asOf)}`]}
+            items={[
+              { label: "Price history", value: "Provider adjusted market-price observations." },
+              { label: "DCF series", value: "Dated values returned in the provider DCF module; future dates are valuation forecast periods, not past estimate revisions." },
+              { label: "No persistence score", value: "The app does not calculate a duration, confidence band, or probability from this chart." },
+            ]}
+          />
         </section>
 
         <section className="security-card" aria-labelledby="fundamentals-heading">
@@ -514,6 +384,18 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             <MetricTile label="Dividend yield" metric={data.fundamentals.dividendYield} formatter={percent} />
             <MetricTile label="EPS" metric={data.fundamentals.eps} formatter={(value) => money(value, data.identity.currency)} />
           </div>
+          <CalculationDisclosure
+            title="Score and metric definitions"
+            summary="Displayed score labels are local bands; provider score weights are not supplied"
+            formulas={[
+              { label: "Score label", expression: "≥8 Strong; ≥6.5 Healthy; ≥4.5 Balanced; otherwise Needs review" },
+            ]}
+            items={[
+              { label: "Scores", value: "Past, health, and future scores are provider-supplied on a 0–10 scale. The feed does not expose their component weights, so the app does not recalculate them." },
+              { label: "Multiples", value: "P/E and P/S use trailing-twelve-month provider figures; P/B uses the latest reported-quarter book value." },
+              { label: "Growth & returns", value: "Revenue growth and earnings growth are provider TTM year-over-year values; ROE is the provider annualized return; dividend yield is trailing twelve months." },
+            ]}
+          />
         </section>
 
         <section className="security-card" aria-labelledby="financials-heading">
@@ -521,30 +403,27 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             id="financials-heading"
             eyebrow="Owner earnings"
             title="Do profits become cash?"
-            description="Annual revenue, accounting earnings, and free cash flow reveal whether reported growth can accrue to owners."
+            description="Fiscal-year totals are used when returned. A series fallback is explicitly labelled as a year-end TTM observation rather than an annual sum."
             icon={<FileText aria-hidden="true" />}
           />
           <FinancialHistoryChart periods={data.financials.annual} />
           <div className="security-financial-snapshot">
             <MetricBlock label="Revenue" metric={data.fundamentals.revenue} formatter={(value) => money(value, data.identity.currency, true)} />
             <MetricBlock label="Net income" metric={data.fundamentals.netIncome} formatter={(value) => money(value, data.identity.currency, true)} />
-            <MetricBlock label="Owner-earnings proxy" metric={data.fundamentals.freeCashFlow} formatter={(value) => money(value, data.identity.currency, true)} />
+            <MetricBlock label="Free-cash-flow proxy" metric={data.fundamentals.freeCashFlow} formatter={(value) => money(value, data.identity.currency, true)} />
             <MetricBlock label="Net margin" metric={{ value: netMargin, unit: "ratio" }} formatter={(value) => percent(value, 1, true)} />
           </div>
           <Disclosure title="View financial statement table" icon={<BookOpen aria-hidden="true" />}>
             {data.financials.annual.length ? (
               <div className="security-table-scroll">
                 <table className="security-table">
-                  <thead><tr><th>Period</th><th>Revenue</th><th>Net income</th><th>Free cash flow</th><th>Cash</th><th>Debt</th></tr></thead>
+                  <thead><tr><th>Period</th><th>Revenue</th><th>Net income</th></tr></thead>
                   <tbody>
                     {data.financials.annual.slice().reverse().map((row) => (
                       <tr key={row.period}>
                         <th>{row.period}</th>
                         <td>{money(row.revenue, data.identity.currency, true)}</td>
                         <td>{money(row.netIncome, data.identity.currency, true)}</td>
-                        <td>{money(row.freeCashFlow, data.identity.currency, true)}</td>
-                        <td>{money(row.cash, data.identity.currency, true)}</td>
-                        <td>{money(row.debt, data.identity.currency, true)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -569,6 +448,20 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
               </div>
             </div>
           </Disclosure>
+          <CalculationDisclosure
+            title="Cash and margin calculations"
+            summary="Net margin = net income ÷ revenue · FCF margin = free cash flow ÷ revenue"
+            formulas={[
+              { label: "Net margin", expression: "TTM net income / TTM revenue" },
+              { label: "FCF margin", expression: "TTM free cash flow / TTM revenue" },
+              { label: "Combined costs", expression: "net income - revenue" },
+              { label: "Cash conversion bridge", expression: "free cash flow - net income" },
+            ]}
+            items={[
+              { label: "Free-cash-flow proxy", value: "This is the provider's TTM free cash flow. It is not a locally adjusted owner-earnings figure and does not estimate maintenance capital expenditure." },
+              { label: "Bridge scope", value: "The waterfall is a simplified reconciliation built from the three displayed totals; it is not a full cash-flow statement." },
+            ]}
+          />
         </section>
 
         <section className="security-card" aria-labelledby="research-heading">
@@ -599,34 +492,26 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           </Disclosure>
         </section>
 
-        <section className="security-two-column">
-          <div className="security-card" aria-labelledby="targets-heading">
-            <SectionHeading
-              id="targets-heading"
-              eyebrow="Expectations check"
-              title="What is the market expected to deliver?"
-              description={data.targets.analystCount.value === null ? "Coverage count is unavailable; treat targets as expectations, not evidence." : `${Math.round(data.targets.analystCount.value)} tracked analysts frame expectations, not certainty.`}
-              icon={<Target aria-hidden="true" />}
-            />
-            <TargetRange summary={data} />
+        <section className="security-card" aria-labelledby="returns-heading">
+          <SectionHeading
+            id="returns-heading"
+            eyebrow="Downside protection"
+            title="Capital allocation and balance-sheet risk"
+            description="Owner returns must be weighed against leverage, liquidity needs, and reinvestment demands."
+            icon={<WalletCards aria-hidden="true" />}
+          />
+          <div className="security-capital-list">
+            <MetricBlock label={data.capitalReturns.dividends.unit?.includes("share") ? "Dividends / share" : "Dividends"} metric={data.capitalReturns.dividends} formatter={(value) => data.capitalReturns.dividends.unit === "%" ? percent(value) : money(value, data.identity.currency, true)} />
+            <MetricBlock label="Debt / equity" metric={data.capitalReturns.debtToEquity} formatter={(value) => data.capitalReturns.debtToEquity.unit === "%" ? percent(value) : multiple(value)} />
           </div>
-          <div className="security-card" aria-labelledby="returns-heading">
-            <SectionHeading
-              id="returns-heading"
-              eyebrow="Downside protection"
-              title="Capital allocation and balance-sheet risk"
-              description="Owner returns must be weighed against leverage, liquidity needs, and reinvestment demands."
-              icon={<WalletCards aria-hidden="true" />}
-            />
-            <div className="security-capital-list">
-              <MetricBlock label={data.capitalReturns.dividends.unit?.includes("share") ? "Dividends / share" : "Dividends"} metric={data.capitalReturns.dividends} formatter={(value) => data.capitalReturns.dividends.unit === "%" ? percent(value) : money(value, data.identity.currency, true)} />
-              <MetricBlock label="Buybacks" metric={data.capitalReturns.buybacks} formatter={(value) => money(value, data.identity.currency, true)} />
-              <MetricBlock label="Debt / equity" metric={data.capitalReturns.debtToEquity} formatter={(value) => data.capitalReturns.debtToEquity.unit === "%" ? percent(value) : multiple(value)} />
-            </div>
-            <Disclosure title="View cash and debt history" icon={<Landmark aria-hidden="true" />}>
-              <CashAndDebtChart periods={data.financials.annual} />
-            </Disclosure>
-          </div>
+          <CalculationDisclosure
+            title="Capital-return inputs"
+            summary="Annual dividend per share and provider-defined debt-to-equity"
+            items={[
+              { label: "Dividend", value: "The first valid annual dividend amount returned by the provider module. Confirm the represented period in company filings." },
+              { label: "Debt / equity", value: "A provider-supplied ratio. The page does not reconstruct it because the provider's debt and equity scope is not included." },
+            ]}
+          />
         </section>
 
         <section className="security-card" aria-labelledby="peers-heading">
@@ -638,8 +523,15 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             icon={<Building2 aria-hidden="true" />}
           />
           {peers?.peers.length ? (
-            <div className="security-table-scroll">
-              <table className="security-table security-peer-table">
+            <>
+              {peers.selectionReason ? (
+                <p className="security-peer-note" role="status">
+                  <Info aria-hidden="true" size={16} />
+                  <span>{peers.selectionReason}</span>
+                </p>
+              ) : null}
+              <div className="security-table-scroll">
+                <table className="security-table security-peer-table">
                 <thead><tr><th>Company</th><th>Price</th><th>Market cap</th><th>P / E</th><th>P / B</th><th>P / S</th></tr></thead>
                 <tbody>
                   {peers.peers.map((peer) => (
@@ -652,76 +544,23 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
                   ))}
                 </tbody>
                 <tfoot><tr><th>Peer median</th><td>—</td><td>—</td><td>{multiple(peers.medians.pe)}</td><td>{multiple(peers.medians.pb)}</td><td>{multiple(peers.medians.ps)}</td></tr></tfoot>
-              </table>
-            </div>
-          ) : <Unavailable message="Comparable-company data is not available for this security." />}
-        </section>
-
-        <section className="security-two-column">
-          <div className="security-card" aria-labelledby="ownership-heading">
-            <SectionHeading
-              id="ownership-heading"
-              eyebrow="Incentives"
-              title="Who shares the outcome?"
-              description="Ownership context can sharpen questions about alignment, influence, and the durability of the thesis."
-              icon={<PieChartIcon aria-hidden="true" />}
-            />
-            <OwnershipChart institutional={data.ownership.institutional} insider={data.ownership.insider} publicValue={data.ownership.public} />
-          </div>
-          <div className="security-card" aria-labelledby="insiders-heading">
-            <SectionHeading
-              id="insiders-heading"
-              eyebrow="Governance checks"
-              title="Transactions that can test conviction"
-              description="Verify insider activity against company filings before treating it as evidence for or against the opportunity."
-              icon={<Users aria-hidden="true" />}
-            />
-            <Unavailable message="Insider transaction history is not available for this security." />
-          </div>
-        </section>
-
-        <section className="security-card" aria-labelledby="journal-heading">
-          <SectionHeading
-            id="journal-heading"
-            eyebrow="Opportunity journal"
-            title="Record the thesis and its breakpoints"
-            description="Capture the price, margin-of-safety requirement, and invalidation tests in your private workspace."
-            icon={<FileText aria-hidden="true" />}
-          />
-          <div className="security-journal-grid">
-            <div>
-              <span className="security-control-label">Current stance</span>
-              <div className="security-segmented" role="radiogroup" aria-label="Investment sentiment">
-                {(["bear", "neutral", "bull"] as Sentiment[]).map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={sentiment === value}
-                    className={sentiment === value ? "is-selected" : ""}
-                    onClick={() => changeSentiment(value)}
-                  >
-                    {value[0].toUpperCase() + value.slice(1)}
-                  </button>
-                ))}
+                </table>
               </div>
-              <p className="security-helper">This marker is for your own thesis tracking and is not a rating.</p>
-            </div>
-            <div>
-              <label className="security-control-label" htmlFor="research-note">Research note</label>
-              <textarea
-                id="research-note"
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder={`What would invalidate the ${canonicalSymbol} opportunity?`}
-                rows={5}
-              />
-              <button className="security-save-button" type="button" onClick={saveNote}>
-                {noteSaved ? <Check aria-hidden="true" /> : <Save aria-hidden="true" />}
-                {noteSaved ? "Saved to workspace" : "Save note"}
-              </button>
-            </div>
-          </div>
+            </>
+          ) : <Unavailable message="Comparable-company data is not available for this security." />}
+          <CalculationDisclosure
+            title="How comparable companies are chosen"
+            summary="Industry first · size-nearest issuers · positive-multiple medians"
+            badges={[peers?.asOf ? `Peer snapshot ${asOfDate(peers.asOf)}` : null]}
+            formulas={[
+              { label: "Peer median", expression: "middle positive finite observation; average the two middle values when count is even" },
+            ]}
+            items={[
+              { label: "Selection", value: "Start with the provider industry, exclude the target and duplicate issuers, require at least two usable P/E, P/S, or P/B values, then retain up to eight closest companies by log market-cap distance." },
+              { label: "Fallback", value: "A broader sector peer group is used when any displayed multiple has fewer than three usable industry observations." },
+              { label: "Refresh scope", value: "This table is fetched separately from the overview summary; its timestamp is shown above because a refresh can momentarily differ from the selected peer estimate." },
+            ]}
+          />
         </section>
 
         <section className="security-card" aria-labelledby="related-heading">
@@ -734,9 +573,9 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           />
           {data.related.length ? (
             <div className="security-related-grid">
-              {data.related.map((relatedSymbol) => (
-                <Link key={relatedSymbol} href={`/value-opportunities/${data.identity.exchange.toLowerCase()}/${relatedSymbol.toLowerCase()}/overview`}>
-                  <div><span>{data.identity.exchange}</span><strong>{relatedSymbol.toUpperCase()}</strong></div>
+              {data.related.map((relatedSecurity) => (
+                <Link key={`${relatedSecurity.exchange}:${relatedSecurity.symbol}`} href={`/value-opportunities/${relatedSecurity.exchange.toLowerCase()}/${relatedSecurity.symbol.toLowerCase()}/overview`}>
+                  <div><span>{relatedSecurity.exchange.toUpperCase()}</span><strong>{relatedSecurity.symbol.toUpperCase()}</strong></div>
                   <ArrowRight aria-hidden="true" />
                 </Link>
               ))}
@@ -751,7 +590,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           </div>
           <div>
             <details><summary>What makes the current price attractive?<ChevronRight aria-hidden="true" /></summary><p>Price becomes potentially attractive when it sits meaningfully below a conservative estimate of normalized owner earnings or value, while the business quality and balance sheet can protect the downside. A low multiple alone does not establish an opportunity.</p></details>
-            <details><summary>How much margin of safety is enough?<ChevronRight aria-hidden="true" /></summary><p>The required discount should grow with uncertainty, cyclicality, leverage, customer concentration, and the risk of permanent capital loss. The saved watch level is a private research marker, not a recommendation or alert.</p></details>
+            <details><summary>How much margin of safety is enough?<ChevronRight aria-hidden="true" /></summary><p>The required discount should grow with uncertainty, cyclicality, leverage, customer concentration, and the risk of permanent capital loss. No single percentage is sufficient on its own.</p></details>
             <details><summary>What can invalidate the opportunity?<ChevronRight aria-hidden="true" /></summary><p>Persistent margin erosion, weaker cash conversion, balance-sheet stress, dilution, poor capital allocation, or evidence that normalized demand is lower than assumed can break the thesis even if the quoted price falls.</p></details>
             <details><summary>What should I verify before acting?<ChevronRight aria-hidden="true" /></summary><p>Read current company filings, reconcile reported earnings with cash flow, test valuation assumptions, inspect debt and dilution, compare credible alternatives, and decide whether the possible loss fits your objectives and risk tolerance.</p></details>
           </div>
@@ -853,21 +692,23 @@ function ScoreCard({
 }
 
 function ValuationRange({ data }: { data: SecuritySummary }) {
-  const values = [
-    data.valuation.bearValue.value,
-    data.valuation.baseValue.value,
-    data.valuation.bullValue.value,
-    data.quote.price.value,
-  ].filter((value): value is number => value !== null && Number.isFinite(value));
-  if (!values.length) return <Unavailable message="A valuation range cannot be calculated from the available data." />;
-  const min = Math.min(...values) * 0.92;
-  const max = Math.max(...values) * 1.08;
-  const position = (value: number | null) => value === null ? null : Math.max(0, Math.min(100, (value - min) / (max - min) * 100));
   const marks = [
-    { label: "Bear", value: data.valuation.bearValue.value, className: "is-bear" },
-    { label: "Base", value: data.valuation.baseValue.value, className: "is-base" },
-    { label: "Bull", value: data.valuation.bullValue.value, className: "is-bull" },
+    { label: "Provider DCF", value: data.valuation.dcfValue.value, className: "is-bear" },
+    { label: "Selected value", value: data.valuation.fairValue.value, className: "is-base" },
+    { label: "Peer estimate", value: data.valuation.peerValue.value, className: "is-bull" },
   ];
+  const methodValues = marks
+    .map((mark) => mark.value)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  if (!methodValues.length) return <Unavailable message="No current valuation method is available for this security." />;
+  const values = [data.quote.price.value, ...methodValues]
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const padding = Math.max((rawMax - rawMin) * 0.08, Math.abs(rawMax || rawMin) * 0.04, 1);
+  const min = rawMin - padding;
+  const max = rawMax + padding;
+  const position = (value: number | null) => value === null ? null : Math.max(0, Math.min(100, (value - min) / (max - min) * 100));
   return (
     <div className="security-range-wrap">
       <div className="security-range-track">
@@ -885,33 +726,6 @@ function ValuationRange({ data }: { data: SecuritySummary }) {
           <div key={mark.label}><span>{mark.label}</span><strong>{money(mark.value, data.identity.currency)}</strong></div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function TargetRange({ summary }: { summary: SecuritySummary }) {
-  const low = summary.targets.low.value;
-  const mean = summary.targets.mean.value;
-  const high = summary.targets.high.value;
-  const current = summary.quote.price.value;
-  const values = [low, mean, high, current].filter((value): value is number => value !== null);
-  if (values.length < 2) return <Unavailable message="Analyst targets are not available for this security." />;
-  const min = Math.min(...values) * 0.94;
-  const max = Math.max(...values) * 1.06;
-  const pos = (value: number | null) => value === null ? null : (value - min) / (max - min) * 100;
-  return (
-    <div className="security-target-range">
-      <div className="security-target-summary">
-        <div><span>Low</span><strong>{money(low, summary.identity.currency)}</strong></div>
-        <div className="is-mean"><span>Mean</span><strong>{money(mean, summary.identity.currency)}</strong></div>
-        <div><span>High</span><strong>{money(high, summary.identity.currency)}</strong></div>
-      </div>
-      <div className="security-target-track">
-        <div />
-        {pos(mean) !== null ? <i className="is-mean" style={{ left: `${pos(mean)}%` }} /> : null}
-        {pos(current) !== null ? <span style={{ left: `${pos(current)}%` }}>Price</span> : null}
-      </div>
-      <p>Targets express analyst expectations, not certainty.</p>
     </div>
   );
 }
@@ -972,14 +786,4 @@ function signedPercent(value: number | null) {
   const normalized = percentValue(value, true);
   if (normalized === null) return "—";
   return `${normalized > 0 ? "+" : ""}${normalized.toFixed(1)}%`;
-}
-
-function currencySymbol(currency: string) {
-  try {
-    return new Intl.NumberFormat("en-US", { style: "currency", currency, currencyDisplay: "narrowSymbol" })
-      .formatToParts(0)
-      .find((part) => part.type === "currency")?.value ?? "$";
-  } catch {
-    return "$";
-  }
 }

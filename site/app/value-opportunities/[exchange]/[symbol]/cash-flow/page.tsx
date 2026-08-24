@@ -17,7 +17,7 @@ export async function generateMetadata({
   const canonicalExchange = security.exchange.toLowerCase();
   const canonicalSymbol = security.symbol.toLowerCase();
   return {
-    description: `Estimate what ${security.symbol}'s future cash generation may be worth today and test the margin of safety.`,
+    description: `Compare ${security.symbol}'s provider DCF indication with the analysis-price snapshot and inspect the separate reported and forecast cash-flow evidence.`,
     alternates: {
       canonical: `/value-opportunities/${encodeURIComponent(canonicalExchange)}/${encodeURIComponent(canonicalSymbol)}/cash-flow`,
     },

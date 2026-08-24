@@ -3,16 +3,27 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore The generated worker does not exist before the first build.
 import handler from "../.open-next/worker.js";
+import {
+  refreshTopMarketCapUniverse,
+  TOP_MARKET_CAP_REFRESH_CRON,
+} from "../lib/screener/universe";
+import { runDailyScreenerSnapshotRefresh } from "../lib/screener/daily-refresh";
+import { scheduledScreenerTradingDate } from "../lib/screener/schedule";
+import {
+  cachedScreenerSnapshotResponse,
+  isScreenerApiPath,
+} from "../lib/screener/client-snapshot-cache";
 
 const rateLimitKey = (request: Request) =>
   request.headers.get("CF-Connecting-IP") ?? "local-development";
+const SCREENER_SNAPSHOT_PATH = "/api/screener/snapshot";
 
 async function rateLimitResponse(
   request: Request,
   env: CloudflareEnv,
 ): Promise<Response | null> {
   const pathname = new URL(request.url).pathname;
-  const binding = pathname === "/api/screener"
+  const binding = isScreenerApiPath(pathname)
     ? env.SCREENER_API_RATE_LIMITER
     : pathname.startsWith("/api/security/")
       ? env.SECURITY_API_RATE_LIMITER
@@ -42,6 +53,14 @@ const worker = {
   ): Promise<Response> {
     const limited = await rateLimitResponse(request, env);
     if (limited) return limited;
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === SCREENER_SNAPSHOT_PATH) {
+      return cachedScreenerSnapshotResponse(request, {
+        cache: (caches as CacheStorage & { default: Cache }).default,
+        fetchOrigin: () => handler.fetch(request, env, ctx),
+        waitUntil: (promise) => ctx.waitUntil(promise),
+      });
+    }
     return handler.fetch(request, env, ctx);
   },
   scheduled(
@@ -49,12 +68,55 @@ const worker = {
     env: CloudflareEnv,
     ctx: ExecutionContext,
   ): void {
+    const rawScheduledTime = controller.scheduledTime as unknown;
+    const scheduledTime =
+      typeof rawScheduledTime === "number"
+        ? rawScheduledTime
+        : rawScheduledTime instanceof Date
+          ? rawScheduledTime.valueOf()
+          : Date.now();
+    const tasks: Promise<unknown>[] = [];
+    const tradingDate = scheduledScreenerTradingDate(
+      controller.cron,
+      scheduledTime,
+    );
+    if (tradingDate) {
+      tasks.push(
+        env.DB.prepare("DELETE FROM anonymous_sessions WHERE expires_at <= ?")
+          .bind(scheduledTime)
+          .run(),
+      );
+    }
+    if (tradingDate || controller.cron === TOP_MARKET_CAP_REFRESH_CRON) {
+      process.env.AINVEST_EMAIL = env.AINVEST_EMAIL;
+      process.env.AINVEST_PASSWORD = env.AINVEST_PASSWORD;
+    }
+    if (tradingDate) {
+      tasks.push(
+        runDailyScreenerSnapshotRefresh(env.DB, tradingDate, {
+          scheduledAt: scheduledTime,
+        }).then((result) => {
+          console.log("Scheduled screener snapshot handled.", result);
+        }),
+      );
+    }
+    if (controller.cron === TOP_MARKET_CAP_REFRESH_CRON) {
+      tasks.push(
+        refreshTopMarketCapUniverse(env.DB, {
+          refreshedAt: scheduledTime,
+        }),
+      );
+    }
     ctx.waitUntil(
-      env.DB.prepare(
-        "DELETE FROM anonymous_sessions WHERE expires_at <= ?",
-      )
-        .bind(controller.scheduledTime)
-        .run(),
+      Promise.all(tasks)
+        .then(() => undefined)
+        .catch((error) => {
+          console.error(
+            "Scheduled maintenance failed.",
+            error instanceof Error ? error.message : "Unknown error",
+          );
+          throw error;
+        }),
     );
   },
 };

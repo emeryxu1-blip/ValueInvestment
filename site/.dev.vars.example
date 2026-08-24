@@ -1,0 +1,9 @@
+# Copy this file to .dev.vars, then replace the placeholders.
+# .dev.vars is the only local environment/secrets file used by this project.
+# Keep it private and share it out-of-band with trusted contributors only.
+
+AINVEST_EMAIL=your-account@example.com
+AINVEST_PASSWORD=replace-with-the-private-password
+
+# Optional legacy fallback. Prefer the email/password pair above.
+# AINVEST_C_COOKIE=userid=replace-me; sessionid=replace-me

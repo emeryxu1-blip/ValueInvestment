@@ -36,7 +36,14 @@ export type ScreenerFilters = {
   maxRevenueGrowth?: number;
   positiveNetIncome?: boolean;
   positiveFreeCashFlow?: boolean;
+  minFreeCashFlowYield?: number;
+  maxEvToEbitda?: number;
+  minCashConversion?: number;
+  minReturnOnInvestedCapital?: number;
+  maxNetDebtToFreeCashFlow?: number;
   maxDebtToEquity?: number;
+  stableOperatingMargins5Y?: boolean;
+  expandingOperatingMargins5Y?: boolean;
   sector?: string;
   exchanges?: string[];
   symbols?: string[];
@@ -59,7 +66,14 @@ export type ScreenerRow = {
   netIncome: Metric<number>;
   freeCashFlow: Metric<number>;
   debtToEquity: Metric<number>;
+  evToEbitda: Metric<number>;
+  returnOnInvestedCapital: Metric<number>;
+  netDebt: Metric<number>;
+  operatingMarginStable5Y: Metric<boolean>;
+  operatingMarginTrend5Y: Metric<number>;
+  operatingMarginsExpanding5Y: Metric<boolean>;
   sector: Metric<string>;
+  filterMask: number;
   currency: string;
 };
 
@@ -88,6 +102,11 @@ export type ScreenerResponse = {
     columns: string[];
   };
   scan?: ScanProgress;
+  snapshot?: {
+    generationId: string;
+    universeRefreshedAt: string;
+    refreshedAt: string;
+  };
   asOf: string;
   message?: string;
 };
@@ -108,9 +127,6 @@ export type FinancialPeriod = {
   period: string;
   revenue: number | null;
   netIncome: number | null;
-  freeCashFlow: number | null;
-  debt: number | null;
-  cash: number | null;
 };
 
 export type FinancialBridgeRow = {
@@ -127,6 +143,11 @@ export type FinancialBridge = {
 };
 
 export type SecuritySummaryResponse = {
+  applicability: {
+    companyAnalysis: boolean;
+    securityType: string;
+    reason: string | null;
+  };
   identity: SecurityIdentity;
   quote: {
     price: Metric<number>;
@@ -141,9 +162,6 @@ export type SecuritySummaryResponse = {
     peerValue: Metric<number>;
     fairValue: Metric<number>;
     mispricing: Metric<number>;
-    bearValue: Metric<number>;
-    baseValue: Metric<number>;
-    bullValue: Metric<number>;
   };
   scores: {
     past: Metric<number>;
@@ -174,25 +192,13 @@ export type SecuritySummaryResponse = {
     freeCashFlowMargin: Metric<number>;
     cashFlowBridge: FinancialBridge | null;
   };
-  targets: {
-    low: Metric<number>;
-    mean: Metric<number>;
-    high: Metric<number>;
-    analystCount: Metric<number>;
-  };
   capitalReturns: {
     dividends: Metric<number>;
-    buybacks: Metric<number>;
     debtToEquity: Metric<number>;
-  };
-  ownership: {
-    institutional: Metric<number>;
-    insider: Metric<number>;
-    public: Metric<number>;
   };
   narrative: string[];
   researchPrompts: string[];
-  related: string[];
+  related: Array<{ exchange: string; symbol: string }>;
   dataMode: "live";
   asOf: string;
 };
@@ -223,6 +229,8 @@ export type PeerRow = {
   pe: Metric<number>;
   pb: Metric<number>;
   ps: Metric<number>;
+  netMargin: Metric<number>;
+  returnOnEquity: Metric<number>;
 };
 
 export type PeersResponse = {
@@ -235,6 +243,7 @@ export type PeersResponse = {
     ps: Metric<number>;
   };
   peerValue: Metric<number>;
+  selectionReason?: string;
   source: MetricSource;
   asOf: string;
 };
@@ -298,6 +307,7 @@ export type BusinessQualityResponse = {
   peerComparison: {
     netMarginGap: number | null;
     narrative: string;
+    selectionReason: string | null;
   };
   asOf: string;
   modelVersion: string;

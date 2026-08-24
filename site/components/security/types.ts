@@ -14,12 +14,14 @@ export type FinancialPeriod = {
   period: string;
   revenue: number | null;
   netIncome: number | null;
-  freeCashFlow: number | null;
-  debt: number | null;
-  cash: number | null;
 };
 
 export type SecuritySummary = {
+  applicability: {
+    companyAnalysis: boolean;
+    securityType: string;
+    reason: string | null;
+  };
   identity: {
     marketCode?: string;
     exchange: string;
@@ -44,9 +46,6 @@ export type SecuritySummary = {
     peerValue: Metric<number>;
     fairValue: Metric<number>;
     mispricing: Metric<number>;
-    bearValue: Metric<number>;
-    baseValue: Metric<number>;
-    bullValue: Metric<number>;
   };
   scores: {
     past: Metric<number>;
@@ -63,25 +62,13 @@ export type SecuritySummary = {
     freeCashFlowMargin: Metric<number>;
     cashFlowBridge: FinancialBridge | null;
   };
-  targets: {
-    low: Metric<number>;
-    mean: Metric<number>;
-    high: Metric<number>;
-    analystCount: Metric<number>;
-  };
   capitalReturns: {
     dividends: Metric<number>;
-    buybacks: Metric<number>;
     debtToEquity: Metric<number>;
-  };
-  ownership: {
-    institutional: Metric<number>;
-    insider: Metric<number>;
-    public: Metric<number>;
   };
   narrative: string[];
   researchPrompts: string[];
-  related: string[];
+  related: Array<{ exchange: string; symbol: string }>;
   dataMode: "live";
   asOf: string | null;
 };
@@ -120,6 +107,7 @@ export type PeersResponse = {
   peers: Peer[];
   medians: { pe: number | null; pb: number | null; ps: number | null };
   peerValue: Metric<number>;
+  selectionReason?: string;
   source: Provenance;
   asOf: string | null;
 };

@@ -23,7 +23,14 @@ export const screenerFiltersSchema = z
     maxRevenueGrowth: optionalFiniteNumber,
     positiveNetIncome: z.boolean().optional(),
     positiveFreeCashFlow: z.boolean().optional(),
+    minFreeCashFlowYield: optionalFiniteNumber,
+    maxEvToEbitda: optionalFiniteNumber,
+    minCashConversion: optionalFiniteNumber,
+    minReturnOnInvestedCapital: optionalFiniteNumber,
+    maxNetDebtToFreeCashFlow: optionalFiniteNumber,
     maxDebtToEquity: optionalFiniteNumber,
+    stableOperatingMargins5Y: z.boolean().optional(),
+    expandingOperatingMargins5Y: z.boolean().optional(),
     sector: z.string().trim().max(80).optional(),
     exchanges: z.array(z.string().trim().min(2).max(16)).max(10).optional(),
     symbols: z.array(z.string().trim().min(1).max(24)).max(100).optional(),
@@ -101,6 +108,7 @@ const DEFAULT_COLUMNS = [
   "pe",
   "revenueGrowth",
 ];
+const REQUIRED_SCREENER_EXCHANGES = ["NASDAQ", "NYSE"];
 
 function parseBoolean(value: string | null): boolean | undefined {
   if (value == null || value === "") return undefined;
@@ -190,6 +198,47 @@ function mapFilterDescriptors(descriptors: unknown[]): Record<string, unknown> {
     ) {
       result.positiveFreeCashFlow = true;
       supported = true;
+    } else if (field === "freeCashFlowYield") {
+      supported = assignRange(
+        descriptor,
+        "minFreeCashFlowYield",
+        "maxFreeCashFlowYieldUnsupported",
+      );
+      delete result.maxFreeCashFlowYieldUnsupported;
+      if (operator === "lt" || operator === "lte") supported = false;
+    } else if (field === "evToEbitda") {
+      supported = assignRange(
+        descriptor,
+        "minEvToEbitdaUnsupported",
+        "maxEvToEbitda",
+      );
+      delete result.minEvToEbitdaUnsupported;
+      if (operator === "gt" || operator === "gte") supported = false;
+    } else if (field === "cashConversion") {
+      supported = assignRange(
+        descriptor,
+        "minCashConversion",
+        "maxCashConversionUnsupported",
+      );
+      delete result.maxCashConversionUnsupported;
+      if (operator === "lt" || operator === "lte") supported = false;
+    } else if (field === "returnOnInvestedCapital") {
+      supported = assignRange(
+        descriptor,
+        "minReturnOnInvestedCapital",
+        "maxReturnOnInvestedCapitalUnsupported",
+        (value) => (Math.abs(value) <= 1 ? value * 100 : value),
+      );
+      delete result.maxReturnOnInvestedCapitalUnsupported;
+      if (operator === "lt" || operator === "lte") supported = false;
+    } else if (field === "netDebtToFreeCashFlow") {
+      supported = assignRange(
+        descriptor,
+        "minNetDebtToFreeCashFlowUnsupported",
+        "maxNetDebtToFreeCashFlow",
+      );
+      delete result.minNetDebtToFreeCashFlowUnsupported;
+      if (operator === "gt" || operator === "gte") supported = false;
     } else if (field === "debtToEquity") {
       supported = assignRange(
         descriptor,
@@ -199,6 +248,20 @@ function mapFilterDescriptors(descriptors: unknown[]): Record<string, unknown> {
       );
       delete result.minDebtToEquityUnsupported;
       if (operator === "gt" || operator === "gte") supported = false;
+    } else if (
+      field === "marginStability5Y" &&
+      operator === "eq" &&
+      descriptor.value === true
+    ) {
+      result.stableOperatingMargins5Y = true;
+      supported = true;
+    } else if (
+      field === "marginTrend" &&
+      operator === "gt" &&
+      descriptorNumber(descriptor.value) === 0
+    ) {
+      result.expandingOperatingMargins5Y = true;
+      supported = true;
     } else if (field === "sector" && operator === "eq" && typeof descriptor.value === "string") {
       result.sector = descriptor.value;
       supported = true;
@@ -270,6 +333,11 @@ export function parseScreenerSearchParams(searchParams: URLSearchParams) {
     "maxPe",
     "minRevenueGrowth",
     "maxRevenueGrowth",
+    "minFreeCashFlowYield",
+    "maxEvToEbitda",
+    "minCashConversion",
+    "minReturnOnInvestedCapital",
+    "maxNetDebtToFreeCashFlow",
     "maxDebtToEquity",
     "sector",
     "query",
@@ -287,10 +355,10 @@ export function parseScreenerSearchParams(searchParams: URLSearchParams) {
     .split(",")
     .map((column) => column.trim())
     .filter((column) => ALLOWED_COLUMNS.has(column));
-  return z
+  const parsed = z
     .object({
       page: z.coerce.number().int().min(1).max(500).default(1),
-      pageSize: z.coerce.number().int().min(1).max(100).default(25),
+      pageSize: z.coerce.number().int().min(1).max(1000).default(25),
       sort: screenerSortSchema.default("marketCap"),
       order: z.enum(["asc", "desc"]).default("desc"),
       filters: screenerFiltersSchema,
@@ -304,6 +372,13 @@ export function parseScreenerSearchParams(searchParams: URLSearchParams) {
       filters: rawFilters,
       columns: columns.length > 0 ? columns : DEFAULT_COLUMNS,
     });
+  return {
+    ...parsed,
+    filters: {
+      ...parsed.filters,
+      exchanges: [...REQUIRED_SCREENER_EXCHANGES],
+    },
+  };
 }
 
 export const securityParamsSchema = z.object({
@@ -312,7 +387,7 @@ export const securityParamsSchema = z.object({
 });
 
 export const seriesQuerySchema = z.object({
-  group: z.enum(["valuation", "price", "eps", "financials", "targets"]).default("valuation"),
+  group: z.enum(["valuation", "price", "eps", "financials"]).default("valuation"),
   range: z.enum(["1m", "3m", "6m", "1y", "3y", "5y", "max"]).default("1y"),
 });
 

@@ -1,6 +1,10 @@
-import type { FinancialPeriod } from "../contracts";
-
 type UnknownRecord = Record<string, unknown>;
+
+export type ProfitabilityHistoryPeriod = {
+  period: string;
+  revenue: number | null;
+  netIncome: number | null;
+};
 
 export type ProfitabilitySnapshot = {
   identity: {
@@ -34,15 +38,21 @@ export type ProfitabilitySnapshot = {
     freeCashFlow: number | null;
     operatingCashFlow: number | null;
   };
-  history: FinancialPeriod[];
+  history: ProfitabilityHistoryPeriod[];
   asOf: string | null;
 };
 
 const isRecord = (value: unknown): value is UnknownRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const finiteNumber = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
+const finiteNumber = (value: unknown): number | null => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
 
 const metric = (payload: UnknownRecord, key: string): UnknownRecord | null => {
   if (!isRecord(payload.metrics)) return null;
@@ -74,7 +84,9 @@ const metricRatio = (payload: UnknownRecord, key: string): number | null => {
   return Math.abs(raw) > 2 ? raw / 100 : raw;
 };
 
-const parseAnnualHistory = (payload: UnknownRecord): FinancialPeriod[] => {
+const parseAnnualHistory = (
+  payload: UnknownRecord,
+): ProfitabilityHistoryPeriod[] => {
   const historyMetric = metric(payload, "earningsRevenueModule");
   const history = isRecord(historyMetric?.value)
     ? historyMetric.value
@@ -85,7 +97,10 @@ const parseAnnualHistory = (payload: UnknownRecord): FinancialPeriod[] => {
       (
         candidate,
       ):
-        | (FinancialPeriod & { fiscalYear: string; isYearEnd: boolean })
+        | (ProfitabilityHistoryPeriod & {
+            fiscalYear: string;
+            isYearEnd: boolean;
+          })
         | null => {
         if (!isRecord(candidate)) return null;
         const period =
@@ -97,9 +112,6 @@ const parseAnnualHistory = (payload: UnknownRecord): FinancialPeriod[] => {
           period,
           revenue: finiteNumber(candidate.operating_income_total),
           netIncome: finiteNumber(candidate.net_profit),
-          freeCashFlow: null,
-          debt: null,
-          cash: null,
           fiscalYear: String(candidate.year ?? period.slice(0, 4)),
           isYearEnd: String(candidate.period ?? "") === "596006",
         };
@@ -108,7 +120,7 @@ const parseAnnualHistory = (payload: UnknownRecord): FinancialPeriod[] => {
     .filter(
       (
         period,
-      ): period is FinancialPeriod & {
+      ): period is ProfitabilityHistoryPeriod & {
         fiscalYear: string;
         isYearEnd: boolean;
       } => period !== null,
@@ -117,7 +129,12 @@ const parseAnnualHistory = (payload: UnknownRecord): FinancialPeriod[] => {
 
   const grouped = new Map<
     string,
-    Array<FinancialPeriod & { fiscalYear: string; isYearEnd: boolean }>
+    Array<
+      ProfitabilityHistoryPeriod & {
+        fiscalYear: string;
+        isYearEnd: boolean;
+      }
+    >
   >();
   for (const period of quarterly) {
     const group = grouped.get(period.fiscalYear) ?? [];
@@ -130,7 +147,7 @@ const parseAnnualHistory = (payload: UnknownRecord): FinancialPeriod[] => {
       ([, periods]) =>
         periods.length === 4 && periods.some((period) => period.isYearEnd),
     )
-    .map(([year, periods]): FinancialPeriod => ({
+    .map(([year, periods]): ProfitabilityHistoryPeriod => ({
       period: `FY ${year}`,
       revenue: periods.every((period) => period.revenue !== null)
         ? periods.reduce(
@@ -144,9 +161,6 @@ const parseAnnualHistory = (payload: UnknownRecord): FinancialPeriod[] => {
             0,
           )
         : null,
-      freeCashFlow: null,
-      debt: null,
-      cash: null,
     }))
     .sort((left, right) => left.period.localeCompare(right.period))
     .slice(-6);

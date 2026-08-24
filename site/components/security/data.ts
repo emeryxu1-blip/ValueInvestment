@@ -116,9 +116,6 @@ const cleanPeriods = (value: unknown): FinancialPeriod[] => {
         period,
         revenue: finiteNumber(item.revenue),
         netIncome: finiteNumber(item.netIncome ?? item.net_income),
-        freeCashFlow: finiteNumber(item.freeCashFlow ?? item.free_cash_flow),
-        debt: finiteNumber(item.debt),
-        cash: finiteNumber(item.cash),
       };
     })
     .filter((item): item is FinancialPeriod => item !== null);
@@ -179,6 +176,7 @@ export function normalizeSummary(
   const quoteRaw = first(raw, ["quote"]) ?? raw;
   const valuationRaw = first(raw, ["valuation"]) ?? raw;
   const scoreRaw = first(raw, ["scores"]) ?? raw;
+  const applicabilityRaw = first(raw, ["applicability"]);
 
   const price = numberMetric(
     quoteRaw,
@@ -234,6 +232,21 @@ export function normalizeSummary(
   const relatedValue = first(raw, ["related", "relatedStocks"]);
 
   return {
+    applicability: {
+      companyAnalysis:
+        !isRecord(applicabilityRaw) ||
+        applicabilityRaw.companyAnalysis !== false,
+      securityType:
+        isRecord(applicabilityRaw) &&
+        typeof applicabilityRaw.securityType === "string"
+          ? applicabilityRaw.securityType
+          : "",
+      reason:
+        isRecord(applicabilityRaw) &&
+        typeof applicabilityRaw.reason === "string"
+          ? applicabilityRaw.reason
+          : null,
+    },
     identity: {
       marketCode: String(first(identityRaw, ["marketCode", "market_code"]) ?? ""),
       exchange: String(first(identityRaw, ["exchange"]) ?? exchange).toUpperCase(),
@@ -258,9 +271,6 @@ export function normalizeSummary(
       peerValue,
       fairValue,
       mispricing: numberMetric(valuationRaw, ["mispricing", "upside", "marginOfSafety"], null, "ratio", fallbackSource),
-      bearValue: numberMetric(valuationRaw, ["bearValue", "bear"], null, "USD", fallbackSource),
-      baseValue: numberMetric(valuationRaw, ["baseValue", "base"], null, "USD", fallbackSource),
-      bullValue: numberMetric(valuationRaw, ["bullValue", "bull"], null, "USD", fallbackSource),
     },
     scores: {
       past: numberMetric(scoreRaw, ["past", "pastScore"], null, "score", fallbackSource),
@@ -291,21 +301,9 @@ export function normalizeSummary(
         first(raw, ["derived.cashFlowBridge"]),
       ),
     },
-    targets: {
-      low: numberMetric(raw, ["targets.low", "analystTargets.low"], null, "USD", fallbackSource),
-      mean: numberMetric(raw, ["targets.mean", "targets.average", "analystTargets.mean"], null, "USD", fallbackSource),
-      high: numberMetric(raw, ["targets.high", "analystTargets.high"], null, "USD", fallbackSource),
-      analystCount: numberMetric(raw, ["targets.analystCount", "targets.count", "analystCount"], null, "analysts", fallbackSource),
-    },
     capitalReturns: {
       dividends: numberMetric(raw, ["capitalReturns.dividends", "dividends"], null, "USD", fallbackSource),
-      buybacks: numberMetric(raw, ["capitalReturns.buybacks", "buybacks"], null, "USD", fallbackSource),
       debtToEquity: numberMetric(raw, ["capitalReturns.debtToEquity", "debtToEquity"], null, "x", fallbackSource),
-    },
-    ownership: {
-      institutional: numberMetric(raw, ["ownership.institutional", "institutionalOwnership"], null, "%", fallbackSource),
-      insider: numberMetric(raw, ["ownership.insider", "insiderOwnership"], null, "%", fallbackSource),
-      public: numberMetric(raw, ["ownership.public", "publicOwnership"], null, "%", fallbackSource),
     },
     narrative: Array.isArray(narrativeValue)
       ? narrativeValue
@@ -321,8 +319,20 @@ export function normalizeSummary(
       : [],
     related: Array.isArray(relatedValue)
       ? relatedValue
-          .map((item) => (typeof item === "string" ? item : isRecord(item) ? item.symbol : null))
-          .filter((item): item is string => typeof item === "string")
+          .map((item) => {
+            if (typeof item === "string") {
+              return { exchange, symbol: item };
+            }
+            if (!isRecord(item)) return null;
+            const relatedExchange =
+              typeof item.exchange === "string" ? item.exchange : exchange;
+            return typeof item.symbol === "string"
+              ? { exchange: relatedExchange, symbol: item.symbol }
+              : null;
+          })
+          .filter(
+            (item): item is { exchange: string; symbol: string } => item !== null,
+          )
       : [],
     dataMode: "live",
     asOf: typeof raw.asOf === "string" ? raw.asOf : price.asOf,
@@ -409,6 +419,10 @@ export function normalizePeers(payload: unknown, symbol: string): PeersResponse 
       ps: medianNumber(mediansRaw.ps),
     },
     peerValue: asMetric<number>(raw.peerValue, null, "derived", "USD"),
+    selectionReason:
+      typeof raw.selectionReason === "string"
+        ? providerNeutralText(raw.selectionReason)
+        : undefined,
     source: provenance(raw.source, "derived"),
     asOf: typeof raw.asOf === "string" ? raw.asOf : null,
   };

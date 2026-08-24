@@ -13,6 +13,7 @@ export type ScreenerStock = {
   exchange: string;
   symbol: string;
   company: string;
+  filterMask: number;
   currency: string;
   price: Metric<number>;
   changePercent: Metric<number>;
@@ -30,6 +31,8 @@ export type ScreenerFilter = {
   category: FilterCategory;
   label: string;
   shortLabel: string;
+  description?: string;
+  minimumSnapshotSchemaVersion?: number;
   field: string;
   operator: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in" | "not_in";
   value: string | number | boolean | string[];
@@ -62,6 +65,5 @@ export type SavedScreen = {
   columns: ColumnKey[];
   sortKey: string;
   sortOrder: SortOrder;
-  symbols: string[];
   savedAt: string;
 };

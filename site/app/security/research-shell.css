@@ -27,9 +27,202 @@
 
 .security-research-page a:focus-visible,
 .security-research-page button:focus-visible,
+.security-research-page summary:focus-visible,
 .security-research-tab-panel:focus-visible {
   outline: 3px solid rgba(8, 120, 232, 0.25);
   outline-offset: 3px;
+}
+
+/* One calm, consistent explanation pattern for every calculated research value. */
+.security-research-page .calculation-disclosure {
+  margin-top: 12px;
+  overflow: clip;
+  border: 1px solid rgba(29, 29, 31, 0.09);
+  border-radius: 13px;
+  background: rgba(247, 247, 249, 0.82);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.86);
+  color: var(--research-ink);
+  backdrop-filter: blur(18px) saturate(1.18);
+  -webkit-backdrop-filter: blur(18px) saturate(1.18);
+}
+
+.security-research-page .calculation-disclosure > summary {
+  display: grid;
+  min-height: 42px;
+  grid-template-columns: 24px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.security-research-page .calculation-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.security-research-page .calculation-disclosure > summary:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.security-research-page .calculation-disclosure-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 7px;
+  background: #e8f3ff;
+  color: var(--research-blue-deep);
+}
+
+.security-research-page .calculation-disclosure-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.security-research-page .calculation-disclosure-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.security-research-page .calculation-disclosure-heading strong {
+  min-width: 0;
+  max-width: 46%;
+  overflow: hidden;
+  flex: 0 1 auto;
+  font-size: 12px;
+  font-weight: 690;
+  line-height: 1.2;
+  letter-spacing: -0.012em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.security-research-page .calculation-disclosure-heading > span {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  color: var(--research-copy);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.security-research-page .calculation-disclosure-badges {
+  display: flex;
+  min-width: 0;
+  max-width: min(38vw, 420px);
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.security-research-page .calculation-disclosure-badges > span {
+  max-width: 160px;
+  overflow: hidden;
+  flex: 0 1 auto;
+  padding: 3px 6px;
+  border: 1px solid rgba(8, 120, 232, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--research-blue-deep);
+  font-size: 9px;
+  font-weight: 660;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.security-research-page .calculation-disclosure-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--research-muted);
+  transition: transform 180ms ease;
+}
+
+.security-research-page .calculation-disclosure[open] .calculation-disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+.security-research-page .calculation-disclosure-body {
+  display: grid;
+  gap: 14px;
+  padding: 9px 14px 14px 44px;
+  border-top: 1px solid rgba(29, 29, 31, 0.055);
+}
+
+.security-research-page .calculation-disclosure-formulas {
+  display: grid;
+  gap: 8px;
+}
+
+.security-research-page .calculation-disclosure-formulas > div {
+  display: grid;
+  grid-template-columns: minmax(105px, 0.32fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 14px;
+}
+
+.security-research-page .calculation-disclosure-formulas span,
+.security-research-page .calculation-disclosure dt {
+  color: var(--research-muted);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.security-research-page .calculation-disclosure code {
+  color: #343438;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.security-research-page .calculation-disclosure dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.security-research-page .calculation-disclosure dl > div {
+  display: grid;
+  grid-template-columns: minmax(105px, 0.32fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.security-research-page .calculation-disclosure dd {
+  margin: 0;
+  color: var(--research-copy);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.security-research-page .calculation-disclosure-notes {
+  padding-top: 12px;
+  border-top: 1px solid rgba(29, 29, 31, 0.07);
+  color: var(--research-copy);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.security-research-page .calculation-disclosure-notes > :first-child {
+  margin-top: 0;
+}
+
+.security-research-page .calculation-disclosure-notes > :last-child {
+  margin-bottom: 0;
 }
 
 .security-research-shell,
@@ -81,6 +274,7 @@
 }
 
 .security-research-monogram {
+  position: relative;
   display: grid;
   width: 64px;
   height: 64px;
@@ -88,6 +282,7 @@
   place-items: center;
   border: 1px solid rgba(0, 105, 217, 0.1);
   border-radius: 18px;
+  overflow: hidden;
   background: linear-gradient(145deg, #1990ff, #0068d5);
   box-shadow:
     0 9px 24px rgba(0, 105, 217, 0.2),
@@ -96,6 +291,15 @@
   font-size: 21px;
   font-weight: 760;
   letter-spacing: -0.05em;
+}
+
+.security-research-monogram img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .security-research-ticker {
@@ -466,6 +670,40 @@
 
   .security-research-shell {
     padding-top: 22px;
+  }
+
+  .security-research-page .calculation-disclosure > summary {
+    min-height: 40px;
+    grid-template-columns: 22px minmax(0, 1fr) 14px;
+    gap: 7px;
+    padding: 7px 10px;
+  }
+
+  .security-research-page .calculation-disclosure-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .security-research-page .calculation-disclosure-heading {
+    gap: 6px;
+  }
+
+  .security-research-page .calculation-disclosure-heading strong {
+    max-width: 48%;
+  }
+
+  .security-research-page .calculation-disclosure-badges {
+    display: none;
+  }
+
+  .security-research-page .calculation-disclosure-body {
+    padding: 10px 12px 14px;
+  }
+
+  .security-research-page .calculation-disclosure-formulas > div,
+  .security-research-page .calculation-disclosure dl > div {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 
   .security-research-back {

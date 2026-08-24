@@ -2,15 +2,10 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Legend,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -25,7 +20,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { FinancialBridge } from "@/lib/contracts";
-import type { FinancialPeriod, Metric, SeriesResponse } from "./types";
+import type { FinancialPeriod, SeriesResponse } from "./types";
 
 const moneyCompact = (value: number) =>
   new Intl.NumberFormat("en-US", {
@@ -135,7 +130,7 @@ export function ValuationHistoryChart({
         message={
           isPriceOnly
             ? "Market price history is not available for this security."
-            : "Valuation history is not available for this security."
+            : "Provider price history and dated DCF values are unavailable for this security."
         }
       />
     );
@@ -154,7 +149,7 @@ export function ValuationHistoryChart({
       <div
         ref={containerRef}
         className="security-lightweight-chart"
-        aria-label={isPriceOnly ? "Historical market price chart" : "Historical market price and fair value chart"}
+        aria-label={isPriceOnly ? "Historical market price chart" : "Provider market-price history and dated DCF value chart"}
       />
     </div>
   );
@@ -167,7 +162,6 @@ export function FinancialHistoryChart({ periods }: { periods: FinancialPeriod[] 
         period: period.period,
         revenue: period.revenue,
         income: period.netIncome,
-        cashFlow: period.freeCashFlow,
       })),
     [periods],
   );
@@ -175,7 +169,7 @@ export function FinancialHistoryChart({ periods }: { periods: FinancialPeriod[] 
   if (!data.length) return <ChartEmpty message="Historical financials are not available." />;
 
   return (
-    <div className="security-rechart" aria-label="Revenue, net income and free cash flow chart">
+    <div className="security-rechart" aria-label="Revenue and net income history chart">
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={data} margin={{ top: 12, right: 4, bottom: 0, left: 0 }}>
           <CartesianGrid vertical={false} stroke="rgba(60,60,67,.08)" />
@@ -185,87 +179,8 @@ export function FinancialHistoryChart({ periods }: { periods: FinancialPeriod[] 
           <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
           <Bar dataKey="revenue" name="Revenue" fill="#007aff" radius={[5, 5, 0, 0]} />
           <Bar dataKey="income" name="Net income" fill="#5ac8fa" radius={[5, 5, 0, 0]} />
-          <Bar dataKey="cashFlow" name="Free cash flow" fill="#30b46d" radius={[5, 5, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
-    </div>
-  );
-}
-
-export function CashAndDebtChart({ periods }: { periods: FinancialPeriod[] }) {
-  const data = periods.slice(-6).map((period) => ({
-    period: period.period,
-    cash: period.cash,
-    debt: period.debt,
-  }));
-  if (!data.length) return <ChartEmpty message="Cash and debt history is not available." />;
-
-  return (
-    <div className="security-rechart" aria-label="Cash and debt history chart">
-      <ResponsiveContainer width="100%" height={260}>
-        <AreaChart data={data} margin={{ top: 8, right: 6, bottom: 0, left: 0 }}>
-          <defs>
-            <linearGradient id="cashFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#30b46d" stopOpacity={0.24} />
-              <stop offset="95%" stopColor="#30b46d" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="debtFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#ff9f0a" stopOpacity={0.19} />
-              <stop offset="95%" stopColor="#ff9f0a" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid vertical={false} stroke="rgba(60,60,67,.08)" />
-          <XAxis dataKey="period" tickLine={false} axisLine={false} tick={{ fill: "#86868b", fontSize: 11 }} />
-          <YAxis tickFormatter={axisCompact} tickLine={false} axisLine={false} width={50} tick={{ fill: "#86868b", fontSize: 11 }} />
-          <Tooltip formatter={tooltipMoney} contentStyle={{ borderRadius: 12, border: "1px solid rgba(0,0,0,.08)" }} />
-          <Legend iconType="circle" iconSize={7} wrapperStyle={{ fontSize: 12 }} />
-          <Area type="monotone" dataKey="cash" name="Cash" stroke="#30b46d" fill="url(#cashFill)" strokeWidth={2} connectNulls />
-          <Area type="monotone" dataKey="debt" name="Debt" stroke="#ff9f0a" fill="url(#debtFill)" strokeWidth={2} connectNulls />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-export function OwnershipChart({
-  institutional,
-  insider,
-  publicValue,
-}: {
-  institutional: Metric<number>;
-  insider: Metric<number>;
-  publicValue: Metric<number>;
-}) {
-  const raw = [
-    { name: "Institutions", value: institutional.value, color: "#007aff" },
-    { name: "Insiders", value: insider.value, color: "#af52de" },
-    { name: "Public & other", value: publicValue.value, color: "#b9c0cc" },
-  ].filter((item): item is { name: string; value: number; color: string } => item.value !== null && item.value >= 0);
-  const total = raw.reduce((sum, item) => sum + item.value, 0);
-  const data = raw.map((item) => ({ ...item, value: total <= 1.01 ? item.value * 100 : item.value }));
-  if (!data.length) return <ChartEmpty message="Ownership composition is not available." />;
-
-  return (
-    <div className="security-ownership-chart">
-      <div className="security-donut" aria-label="Ownership composition chart">
-        <ResponsiveContainer width="100%" height={220}>
-          <PieChart>
-            <Pie data={data} dataKey="value" nameKey="name" innerRadius={63} outerRadius={88} paddingAngle={2} stroke="none">
-              {data.map((item) => <Cell key={item.name} fill={item.color} />)}
-            </Pie>
-            <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} contentStyle={{ borderRadius: 12, border: "1px solid rgba(0,0,0,.08)" }} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="security-donut-label"><strong>{data.length}</strong><span>holder groups</span></div>
-      </div>
-      <div className="security-donut-legend">
-        {data.map((item) => (
-          <div key={item.name}>
-            <span><i style={{ background: item.color }} />{item.name}</span>
-            <strong>{item.value.toFixed(item.value < 1 ? 2 : 1)}%</strong>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

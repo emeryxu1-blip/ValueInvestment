@@ -18,17 +18,17 @@ import {
   buildSeriesRequest,
 } from "../ainvest/requests";
 import { metric } from "../metric";
-import type { ResolvedSecurity } from "../market-codes";
+import { catalogEntryForMarketCode, type ResolvedSecurity } from "../market-codes";
 import {
-  combineFairValues,
   deriveMispricing,
   finiteNumber,
   parseEarningsRevenueModule,
   parseDcfModule,
-  scenarioValues,
 } from "./derivations";
 import { buildCashFlowBridge } from "./bridges";
 import { getPeersResponse, unavailablePeersResponse } from "./peers";
+import { companyAnalysisApplicability } from "./company-analysis-applicability.ts";
+import { positiveNumber } from "./valuation.ts";
 
 function unavailable<T>(reason: string, unit?: string): Metric<T> {
   return metric<T>(null, "derived", { reason, unit });
@@ -37,12 +37,12 @@ function unavailable<T>(reason: string, unit?: string): Metric<T> {
 function liveNumber(
   row: NormalizedSnapshotRow,
   id: string,
-  fetchedAt: string,
+  _fetchedAt: string,
   unit?: string,
 ): Metric<number> {
   const value = displayNumberValue(row, id);
   return metric(value, "live", {
-    asOf: row.values[id]?.asOf ?? fetchedAt,
+    asOf: row.values[id]?.asOf ?? null,
     unit,
     ...(value == null ? { reason: "Market data returned no supported value." } : {}),
   });
@@ -61,13 +61,9 @@ function financialPeriodsFromSeries(payload: unknown): {
         period,
         revenue: null,
         netIncome: null,
-        freeCashFlow: null,
-        debt: null,
-        cash: null,
       };
       if (id === "revenue") current.revenue = point.value;
       if (id === "netIncome") current.netIncome = point.value;
-      if (id === "freeCashFlow") current.freeCashFlow = point.value;
       byDate.set(period, current);
     }
   }
@@ -75,7 +71,13 @@ function financialPeriodsFromSeries(payload: unknown): {
     .sort((left, right) => left.period.localeCompare(right.period))
     .slice(-12);
   const latestByYear = new Map<string, FinancialPeriod>();
-  for (const period of quarterly) latestByYear.set(period.period.slice(0, 4), period);
+  for (const period of quarterly) {
+    const year = period.period.slice(0, 4);
+    latestByYear.set(year, {
+      ...period,
+      period: `Year-end TTM ${year}`,
+    });
+  }
   return { annual: [...latestByYear.values()].slice(-5), quarterly };
 }
 
@@ -91,19 +93,6 @@ async function fetchFinancials(resolved: ResolvedSecurity) {
   }
 }
 
-async function fetchTarget(resolved: ResolvedSecurity): Promise<number | null> {
-  try {
-    const payload = await fetchAInvest(
-      "series",
-      buildSeriesRequest(resolved.marketCode, "targets", "3y"),
-    );
-    const points = normalizeSeries(payload)[0]?.values.target?.points ?? [];
-    return points.at(-1)?.value ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function metricNarrative(options: {
   symbol: string;
   mispricing: number | null;
@@ -114,8 +103,8 @@ function metricNarrative(options: {
   if (options.mispricing != null) {
     narrative.push(
       options.mispricing >= 0
-        ? `The blended valuation is ${(options.mispricing * 100).toFixed(1)}% above the latest price.`
-        : `The latest price is ${Math.abs(options.mispricing * 100).toFixed(1)}% above the blended valuation.`,
+        ? `The selected valuation is ${(options.mispricing * 100).toFixed(1)}% above the latest price.`
+        : `The selected valuation is ${Math.abs(options.mispricing * 100).toFixed(1)}% below the latest price.`,
     );
   }
   if (options.revenueGrowth != null) {
@@ -148,40 +137,45 @@ export async function getSecuritySummary(
   const moduleFinancials = parseEarningsRevenueModule(
     objectValue(row, "earningsRevenueModule"),
   );
-  const [peers, fallbackFinancials, targetMean] = await Promise.all([
-    getPeersResponse(resolved, row).catch(() =>
-      unavailablePeersResponse(
-        resolved,
-        "Peer data is temporarily unavailable.",
-      ),
-    ),
-    moduleFinancials.quarterly.length > 0
+  const applicability = companyAnalysisApplicability(resolved, row);
+  const companyAnalysisSupported = applicability.companyAnalysis;
+  const companyAnalysisReason = applicability.reason;
+  const [peers, fallbackFinancials] = await Promise.all([
+    companyAnalysisSupported
+      ? getPeersResponse(resolved, row).catch(() =>
+          unavailablePeersResponse(
+            resolved,
+            "Peer data is temporarily unavailable.",
+          ),
+        )
+      : Promise.resolve(
+          unavailablePeersResponse(resolved, companyAnalysisReason!),
+        ),
+    !companyAnalysisSupported || moduleFinancials.quarterly.length > 0
       ? Promise.resolve({ annual: [], quarterly: [] })
       : fetchFinancials(resolved),
-    fetchTarget(resolved),
   ]);
   const financials =
     moduleFinancials.quarterly.length > 0 ? moduleFinancials : fallbackFinancials;
   const dcfModule = parseDcfModule(objectValue(row, "fairValueModule"));
-  const dcfValue = dcfModule.fairValue;
-  const peerValue = peers.peerValue.value;
-  const fairValue = combineFairValues(dcfValue, peerValue);
+  const dcfValue = companyAnalysisSupported
+    ? positiveNumber(dcfModule.fairValue)
+    : null;
+  const peerValue = companyAnalysisSupported
+    ? positiveNumber(peers.peerValue.value)
+    : null;
+  const fairValue = dcfValue ?? peerValue;
   const price = numberValue(row, "price");
   const mispricing = deriveMispricing(fairValue, price);
-  const scenarios = scenarioValues(fairValue);
   const liveCompany = stringValue(row, "company");
   const sector = stringValue(row, "sector");
   const industry = stringValue(row, "industry");
-  const analystCount = ["analystBuy", "analystHold", "analystSell"]
-    .map((id) => numberValue(row, id))
-    .filter((value): value is number => value != null)
-    .reduce((sum, value) => sum + value, 0);
   const description = unavailable<string>(
     "No supported editorial profile is available for this symbol.",
   );
   const valueMetric = (value: number | null, unit: string, reason: string) =>
     metric(value, "derived", { asOf: fetchedAt, unit, reason });
-  const revenueGrowth = numberValue(row, "revenueGrowth");
+  const revenueGrowth = displayNumberValue(row, "revenueGrowth");
   const revenue = numberValue(row, "revenue");
   const netIncome = numberValue(row, "netIncome");
   const freeCashFlow = numberValue(row, "freeCashFlow");
@@ -193,7 +187,6 @@ export async function getSecuritySummary(
     revenue != null && revenue !== 0 && freeCashFlow != null
       ? freeCashFlow / revenue
       : null;
-  const latestFinancialPeriod = financials.annual.at(-1) ?? null;
   const healthScore = numberValue(row, "healthScore");
   const dividendModule = objectValue<{
     AnnualAmount?: unknown;
@@ -205,12 +198,13 @@ export async function getSecuritySummary(
     : null;
 
   return {
+    applicability,
     identity: {
       marketCode: resolved.marketCode,
       exchange: resolved.exchange,
       symbol: resolved.symbol,
       company: metric(liveCompany ?? resolved.companyName, liveCompany ? "live" : "derived", {
-        asOf: liveCompany ? row.values.company?.asOf ?? fetchedAt : null,
+        asOf: liveCompany ? row.values.company?.asOf ?? null : null,
         ...(!liveCompany
           ? {
               reason: `Resolved from the ${resolved.catalogAsOf} supported security catalog.`,
@@ -219,14 +213,14 @@ export async function getSecuritySummary(
       }),
       description,
       sector: sector
-        ? metric(sector, "live", { asOf: row.values.sector?.asOf ?? fetchedAt })
+        ? metric(sector, "live", { asOf: row.values.sector?.asOf ?? null })
         : unavailable("Sector is unavailable."),
       industry: industry
-        ? metric(industry, "live", { asOf: row.values.industry?.asOf ?? fetchedAt })
+        ? metric(industry, "live", { asOf: row.values.industry?.asOf ?? null })
         : unavailable("Industry is unavailable."),
-      country: metric("United States", "derived", {
-        reason: "Derived from the supported US exchange route.",
-      }),
+      country: unavailable<string>(
+        "Issuer domicile is not available from the supported AInvest C-side indicators.",
+      ),
       currency: "USD",
     },
     quote: {
@@ -239,18 +233,33 @@ export async function getSecuritySummary(
     },
     valuation: {
       dcfValue: metric(dcfValue, "live", {
-        asOf: row.values.fairValueModule?.asOf ?? fetchedAt,
+        asOf: row.values.fairValueModule?.asOf ?? null,
         unit: "USD",
         ...(dcfValue == null
-          ? { reason: "Market data returned no supported cash-flow value." }
+          ? {
+              reason:
+                companyAnalysisReason ??
+                "Market data returned no supported cash-flow value.",
+            }
           : {}),
       }),
       peerValue: peers.peerValue,
-      fairValue: valueMetric(fairValue, "USD", "Mean of available positive DCF and peer values."),
-      mispricing: valueMetric(mispricing, "ratio", "Fair value divided by price, minus one."),
-      bearValue: valueMetric(scenarios.bear, "USD", "Fallback scenario at 80% of base value."),
-      baseValue: valueMetric(scenarios.base, "USD", "Blended base value."),
-      bullValue: valueMetric(scenarios.bull, "USD", "Fallback scenario at 120% of base value."),
+      fairValue: valueMetric(
+        fairValue,
+        "USD",
+        companyAnalysisReason ??
+          (dcfValue != null
+            ? "AInvest cash-flow valuation; the peer estimate is shown separately."
+            : peerValue != null
+              ? "Peer-multiple estimate used because AInvest returned no cash-flow valuation."
+              : "No supported valuation was returned."),
+      ),
+      mispricing: valueMetric(
+        mispricing,
+        "ratio",
+        companyAnalysisReason ??
+          "Selected fair value divided by price, minus one.",
+      ),
     },
     scores: {
       past: liveNumber(row, "pastScore", fetchedAt, "/10"),
@@ -284,38 +293,22 @@ export async function getSecuritySummary(
         "ratio",
         "Free cash flow divided by revenue.",
       ),
-      cashFlowBridge: latestFinancialPeriod
-        ? buildCashFlowBridge(latestFinancialPeriod)
-        : null,
-    },
-    targets: {
-      low: unavailable("A supported analyst low target was not returned.", "USD"),
-      mean: metric(targetMean, "live", {
-        asOf: fetchedAt,
-        unit: "USD",
-        ...(targetMean == null ? { reason: "A supported analyst target was not returned." } : {}),
-      }),
-      high: unavailable("A supported analyst high target was not returned.", "USD"),
-      analystCount: metric(analystCount || null, "live", {
-        asOf: fetchedAt,
-        ...(analystCount === 0 ? { reason: "Analyst count was not returned." } : {}),
+      cashFlowBridge: buildCashFlowBridge({
+        period: "Latest twelve months",
+        revenue,
+        netIncome,
+        freeCashFlow,
       }),
     },
     capitalReturns: {
       dividends: metric(latestDividend, "live", {
-        asOf: row.values.dividendStabilityModule?.asOf ?? fetchedAt,
+        asOf: row.values.dividendStabilityModule?.asOf ?? null,
         unit: "USD/share",
         ...(latestDividend == null
           ? { reason: "A supported annual dividend amount was not returned." }
           : {}),
       }),
-      buybacks: unavailable("A supported buyback amount was not returned.", "USD"),
       debtToEquity: liveNumber(row, "debtToEquity", fetchedAt, "%"),
-    },
-    ownership: {
-      institutional: unavailable("Institutional ownership is unavailable.", "%"),
-      insider: unavailable("Insider ownership is unavailable.", "%"),
-      public: unavailable("Public ownership is unavailable.", "%"),
     },
     narrative: metricNarrative({
       symbol: resolved.symbol,
@@ -328,7 +321,10 @@ export async function getSecuritySummary(
       `Which operating metrics would invalidate the current ${resolved.symbol} valuation?`,
       `How do ${resolved.symbol}'s positive peer multiples compare with its own?`,
     ],
-    related: peers.peers.map((peer) => peer.symbol),
+    related: peers.peers.flatMap((peer) => {
+      const catalog = catalogEntryForMarketCode(peer.marketCode);
+      return catalog ? [{ exchange: catalog.exchange, symbol: peer.symbol }] : [];
+    }),
     dataMode: "live",
     asOf: fetchedAt,
   };

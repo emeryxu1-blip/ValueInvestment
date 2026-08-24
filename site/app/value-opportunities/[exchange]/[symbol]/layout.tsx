@@ -21,7 +21,7 @@ export async function generateMetadata({
 
   return {
     title: `${security.symbol} Value opportunity overview`,
-    description: `Research ${security.companyName} across price, cash-flow value, market expectations, and business quality in one workspace.`,
+    description: `Research ${security.companyName} across price, cash-flow value, market expectations, and business quality.`,
   };
 }
 

@@ -4,6 +4,9 @@
   "main": "./worker/index.ts",
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "secrets": {
+    "required": ["AINVEST_EMAIL", "AINVEST_PASSWORD"]
+  },
   "assets": {
     "directory": "./.open-next/assets",
     "binding": "ASSETS"
@@ -18,12 +21,12 @@
     {
       "binding": "DB",
       "database_name": "value-investment",
-      "database_id": "00000000-0000-4000-8000-000000000000",
+      "database_id": "bd3a07f7-366a-4329-b26f-1f955c25d460",
       "migrations_dir": "./drizzle"
     }
   ],
   "triggers": {
-    "crons": ["17 3 * * *"]
+    "crons": ["0,30 12-14 * * mon-fri", "47 3 L * *"]
   },
   "ratelimits": [
     {

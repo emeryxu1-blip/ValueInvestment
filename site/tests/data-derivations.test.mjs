@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  combineFairValues,
   deriveMispricing,
   derivePeerValue,
   medianPositive,
   parseDcfModule,
   parseEarningsRevenueModule,
-  scenarioValues,
+  parseGrowthForecastModule,
   yyyymmddToIso,
 } from "../lib/security/derivations.ts";
 import { buildCashFlowBridge } from "../lib/security/bridges.ts";
@@ -38,9 +37,6 @@ test("converts the live earnings/revenue module into quarterly and fiscal period
     period: "FY 2025",
     revenue: 46,
     netIncome: 14,
-    freeCashFlow: null,
-    debt: null,
-    cash: null,
   });
 });
 
@@ -51,19 +47,12 @@ test("uses only positive finite peer multiples and per-share fundamentals", () =
     pe: 20,
     pb: 5,
     ps: 10,
-    peerPes: [24, 30],
-    peerPbs: [6, 8],
-    peerPss: [12, 16],
+    peerPes: [24, 27, 30],
+    peerPbs: [6, 7, 8],
+    peerPss: [12, 14, 16],
   });
-  // PE implies 135, PB 140, and PS 140; the canonical policy averages them.
-  assert.ok(Math.abs(peerValue - 415 / 3) < 1e-12);
-  assert.ok(Math.abs(combineFairValues(120, peerValue) - 775 / 6) < 1e-12);
-  assert.equal(combineFairValues(null, 140), 140);
-});
-
-test("falls back to 80/100/120 percent scenarios", () => {
-  assert.deepEqual(scenarioValues(100), { bear: 80, base: 100, bull: 120 });
-  assert.deepEqual(scenarioValues(null), { bear: null, base: null, bull: null });
+  // PE implies 135, PB 140, and PS 140; the canonical policy uses the median.
+  assert.equal(peerValue, 140);
 });
 
 test("extracts the newest DCF prediction and sorts historical points", () => {
@@ -76,6 +65,21 @@ test("extracts the newest DCF prediction and sorts historical points", () => {
   assert.deepEqual(parsed.history, [["20250101", 95], ["20250201", 98]]);
   assert.equal(parsed.latestAdjustedPrice, 99);
   assert.equal(yyyymmddToIso("20260331"), "2026-03-31");
+});
+
+test("normalizes reported and forecast quarterly free cash flow", () => {
+  const parsed = parseGrowthForecastModule({
+    freecash: [["20250630", 20], ["20250331", "10"]],
+    freecash_pred: [["20251231", 40], ["20250930", 30]],
+  });
+  assert.deepEqual(parsed, {
+    reported: [["2025-03-31", 10], ["2025-06-30", 20]],
+    forecast: [["2025-09-30", 30], ["2025-12-31", 40]],
+  });
+  assert.deepEqual(parseGrowthForecastModule(null), {
+    reported: [],
+    forecast: [],
+  });
 });
 
 test("builds financial bridge semantics on the server boundary", () => {

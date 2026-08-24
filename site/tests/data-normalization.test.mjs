@@ -8,6 +8,7 @@ import {
   normalizeSeries,
   normalizeSnapshot,
   numberValue,
+  ratioNumberValue,
   stringValue,
 } from "../lib/ainvest/normalize.ts";
 
@@ -89,6 +90,40 @@ test("formats ratio2 values as display percentages", () => {
   });
   assert.equal(displayNumberValue(normalized.rows[0], "debt"), 9.7165);
   assert.equal(formatAInvestValue(normalized.rows[0].values.debt), "9.7165%");
+});
+
+test("normalizes provider ratio scales to fractions for calculations", () => {
+  const normalized = normalizeSnapshot({
+    data: {
+      indicator: [
+        {
+          id: "sale_net_interest_ratio_ttm",
+          req_unique_id: "netMargin",
+          attr: { value_type: "ratio2", unit: "x100" },
+        },
+        {
+          id: "index_weighted_avg_roe_ttm",
+          req_unique_id: "returnOnEquity",
+          attr: { value_type: "ratio2", unit: "x1000" },
+        },
+        {
+          id: "already_fractional",
+          req_unique_id: "fractional",
+          attr: { value_type: "ratio2" },
+        },
+      ],
+      data: [
+        {
+          symbol_code: "185:MSFT",
+          value: [{ v: 20 }, { v: 250 }, { v: 0.18 }],
+        },
+      ],
+    },
+  });
+
+  assert.equal(ratioNumberValue(normalized.rows[0], "netMargin"), 0.2);
+  assert.equal(ratioNumberValue(normalized.rows[0], "returnOnEquity"), 0.25);
+  assert.equal(ratioNumberValue(normalized.rows[0], "fractional"), 0.18);
 });
 
 test("normalizes reordered historical series by req_unique_id", () => {

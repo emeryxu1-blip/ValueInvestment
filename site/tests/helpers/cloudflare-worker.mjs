@@ -18,6 +18,8 @@ export async function startCloudflareWorker() {
     NO_COLOR: "1",
   };
   delete environment.AINVEST_C_COOKIE;
+  delete environment.AINVEST_EMAIL;
+  delete environment.AINVEST_PASSWORD;
 
   const child = spawn(
     wranglerPath,
@@ -25,6 +27,8 @@ export async function startCloudflareWorker() {
       "dev",
       "--config",
       "wrangler.jsonc",
+      "--env-file",
+      "tests/fixtures/cloudflare-test.env",
       "--ip",
       "127.0.0.1",
       "--port",

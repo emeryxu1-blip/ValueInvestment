@@ -3,6 +3,7 @@ import { fetchAInvest } from "../ainvest/client";
 import {
   normalizeSnapshot,
   numberValue,
+  ratioNumberValue,
   stringValue,
   type NormalizedSnapshotRow,
 } from "../ainvest/normalize";
@@ -14,22 +15,45 @@ import {
 import { metric } from "../metric";
 import {
   catalogEntryForMarketCode,
+  supportsCompanyAnalysis,
   symbolFromMarketCode,
   type ResolvedSecurity,
 } from "../market-codes";
 import { derivePeerValue, medianPositive } from "./derivations";
+import {
+  MINIMUM_PEER_SAMPLE,
+  PEER_CANDIDATE_LIMIT,
+  hasMinimumPeerCoverage,
+  peerMarketCodeBatches,
+  selectComparablePeerRows,
+} from "./peer-selection.ts";
+import { assertCompanyAnalysisApplicable } from "./company-analysis-applicability.ts";
 
 function liveNumber(
   row: NormalizedSnapshotRow,
   id: string,
-  fetchedAt: string,
+  _fetchedAt: string,
   unit?: string,
 ): Metric<number> {
   const value = numberValue(row, id);
   return metric(value, "live", {
-    asOf: row.values[id]?.asOf ?? fetchedAt,
+    asOf: row.values[id]?.asOf ?? null,
     unit,
     ...(value == null ? { reason: "Market data returned no value for this peer metric." } : {}),
+  });
+}
+
+function liveRatio(
+  row: NormalizedSnapshotRow,
+  id: string,
+): Metric<number> {
+  const value = ratioNumberValue(row, id);
+  return metric(value, "live", {
+    asOf: row.values[id]?.asOf ?? null,
+    unit: "ratio",
+    ...(value == null
+      ? { reason: "Market data returned no value for this peer ratio." }
+      : {}),
   });
 }
 
@@ -40,7 +64,7 @@ function peerFromRow(row: NormalizedSnapshotRow, fetchedAt: string): PeerRow {
     marketCode: row.symbolCode,
     symbol: catalog?.symbol ?? symbolFromMarketCode(row.symbolCode),
     company: metric(liveCompany ?? catalog?.companyName ?? null, liveCompany ? "live" : "derived", {
-      asOf: liveCompany ? row.values.company?.asOf ?? fetchedAt : null,
+      asOf: liveCompany ? row.values.company?.asOf ?? null : null,
       ...(!liveCompany && !catalog?.companyName ? { reason: "Company name is unavailable." } : {}),
     }),
     price: liveNumber(row, "price", fetchedAt, "USD"),
@@ -48,6 +72,8 @@ function peerFromRow(row: NormalizedSnapshotRow, fetchedAt: string): PeerRow {
     pe: liveNumber(row, "pe", fetchedAt, "x"),
     pb: liveNumber(row, "pb", fetchedAt, "x"),
     ps: liveNumber(row, "ps", fetchedAt, "x"),
+    netMargin: liveRatio(row, "netMargin"),
+    returnOnEquity: liveRatio(row, "returnOnEquity"),
   };
 }
 
@@ -62,6 +88,7 @@ export function unavailablePeersResponse(
     peers: [],
     medians: { pe: missing("x"), pb: missing("x"), ps: missing("x") },
     peerValue: missing("USD"),
+    selectionReason: reason,
     source: "live",
     asOf: new Date().toISOString(),
   };
@@ -74,35 +101,84 @@ async function fetchTargetRow(resolved: ResolvedSecurity): Promise<NormalizedSna
   return row;
 }
 
+async function relatedMarketCodes(
+  resolved: ResolvedSecurity,
+  sectorCode: string,
+): Promise<string[]> {
+  const relation = (await fetchAInvest("relation", buildRelationRequest(sectorCode))) as {
+    data?: { data?: Array<{ v?: unknown }> };
+  };
+  return [...new Set((relation.data?.data ?? [])
+    .map((item) => item.v)
+    .filter((value): value is string => typeof value === "string")
+    .filter((value) => value !== resolved.marketCode)
+    .filter((value) => {
+      const candidate = catalogEntryForMarketCode(value);
+      return candidate !== null && supportsCompanyAnalysis(candidate);
+    }))].slice(0, PEER_CANDIDATE_LIMIT);
+}
+
+async function peerSnapshotRows(
+  marketCodes: string[],
+): Promise<NormalizedSnapshotRow[]> {
+  const payloads = await Promise.all(
+    peerMarketCodeBatches(marketCodes).map((batch) =>
+      fetchAInvest("snapshot", buildPeerSnapshotRequest(batch)),
+    ),
+  );
+  return payloads.flatMap((payload) => normalizeSnapshot(payload).rows);
+}
+
 export async function getPeersResponse(
   resolved: ResolvedSecurity,
   targetRow?: NormalizedSnapshotRow,
+  purpose: "valuation" | "quality" = "valuation",
 ): Promise<PeersResponse> {
   const target = targetRow ?? (await fetchTargetRow(resolved));
-  const sectorCode = stringValue(target, "sectorCode");
-  if (!sectorCode) {
+  assertCompanyAnalysisApplicable(resolved, target);
+  const industryCode = stringValue(target, "sectorCode");
+  const sectorGroupCode = stringValue(target, "sectorGroupCode");
+  if (!industryCode && !sectorGroupCode) {
     return unavailablePeersResponse(
       resolved,
       "A supported industry relationship was not returned.",
     );
   }
-  const relation = (await fetchAInvest("relation", buildRelationRequest(sectorCode))) as {
-    data?: { data?: Array<{ v?: unknown }> };
-  };
-  const marketCodes = (relation.data?.data ?? [])
-    .map((item) => item.v)
-    .filter((value): value is string => typeof value === "string")
-    .filter((value) => value !== resolved.marketCode)
-    .slice(0, 8);
-  if (marketCodes.length === 0) {
-    return unavailablePeersResponse(resolved, "No supported peers were returned.");
+  const primaryCodes = industryCode
+    ? await relatedMarketCodes(resolved, industryCode)
+    : [];
+  let candidateRows = await peerSnapshotRows(primaryCodes);
+  let selectedRows = selectComparablePeerRows(target, candidateRows, 8, purpose);
+  let usedBroaderSectorGroup = false;
+  if (
+    !hasMinimumPeerCoverage(selectedRows, purpose) &&
+    sectorGroupCode &&
+    sectorGroupCode !== industryCode
+  ) {
+    usedBroaderSectorGroup = true;
+    const seen = new Set(primaryCodes);
+    const broaderCodes = (await relatedMarketCodes(resolved, sectorGroupCode))
+      .filter((marketCode) => !seen.has(marketCode));
+    candidateRows = [...candidateRows, ...(await peerSnapshotRows(broaderCodes))];
+    selectedRows = selectComparablePeerRows(target, candidateRows, 8, purpose);
   }
-  const payload = await fetchAInvest("snapshot", buildPeerSnapshotRequest(marketCodes));
+  if (selectedRows.length === 0) {
+    return unavailablePeersResponse(resolved, "No supported comparable peers were returned.");
+  }
   const fetchedAt = new Date().toISOString();
-  const peers = normalizeSnapshot(payload).rows.map((row) => peerFromRow(row, fetchedAt));
-  const medianPe = medianPositive(peers.map((peer) => peer.pe.value));
-  const medianPb = medianPositive(peers.map((peer) => peer.pb.value));
-  const medianPs = medianPositive(peers.map((peer) => peer.ps.value));
+  const peers = selectedRows.map((row) => peerFromRow(row, fetchedAt));
+  const medianPe = medianPositive(
+    peers.map((peer) => peer.pe.value),
+    MINIMUM_PEER_SAMPLE,
+  );
+  const medianPb = medianPositive(
+    peers.map((peer) => peer.pb.value),
+    MINIMUM_PEER_SAMPLE,
+  );
+  const medianPs = medianPositive(
+    peers.map((peer) => peer.ps.value),
+    MINIMUM_PEER_SAMPLE,
+  );
   const peerValue = derivePeerValue({
     price: numberValue(target, "price"),
     pe: numberValue(target, "pe"),
@@ -116,8 +192,28 @@ export async function getPeersResponse(
     metric(value, "derived", {
       asOf: fetchedAt,
       unit: "x",
-      reason: "Median of positive peer multiples returned by market data.",
+      reason:
+        value === null
+          ? `At least ${MINIMUM_PEER_SAMPLE} positive observations are required for this peer median.`
+          : "Median of positive peer multiples returned by market data.",
     });
+  const hasCoverage = hasMinimumPeerCoverage(selectedRows, purpose);
+  const coverageLabel =
+    purpose === "quality"
+      ? "direct net-margin and return-on-equity observations"
+      : "positive valuation-multiple observations";
+  const selectionReasons = [
+    ...(usedBroaderSectorGroup
+      ? [
+          `The industry peer set did not provide enough ${coverageLabel}, so the displayed set also includes companies from the broader provider sector group.`,
+        ]
+      : []),
+    ...(!hasCoverage
+      ? [
+          `At least ${MINIMUM_PEER_SAMPLE} ${coverageLabel} are required for every displayed median; incomplete values remain blank.`,
+        ]
+      : []),
+  ];
   return {
     symbol: resolved.symbol,
     marketCode: resolved.marketCode,
@@ -131,8 +227,13 @@ export async function getPeersResponse(
       asOf: fetchedAt,
       unit: "USD",
       reason:
-        "Mean of positive implied values from median peer PE, PS, and PB applied to company per-share fundamentals.",
+        peerValue === null
+          ? `A peer valuation requires target multiples and at least ${MINIMUM_PEER_SAMPLE} positive peer observations for the displayed measures.`
+          : "Median of positive PE-, PS-, and PB-implied values using share-class-consistent company multiples.",
     }),
+    ...(selectionReasons.length > 0
+      ? { selectionReason: selectionReasons.join(" ") }
+      : {}),
     source: "live",
     asOf: fetchedAt,
   };

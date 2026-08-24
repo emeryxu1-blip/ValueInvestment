@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { CompanyAnalysisUnsupportedError } from "./security/company-analysis-applicability.ts";
 
 export function jsonResponse(
   value: unknown,
@@ -47,6 +48,17 @@ export function liveDataUnavailable(): Response {
 }
 
 export function routeError(error: unknown): Response {
+  if (error instanceof CompanyAnalysisUnsupportedError) {
+    return jsonResponse(
+      {
+        code: "UNSUPPORTED_COMPANY_ANALYSIS",
+        error: error.message,
+        retryable: false,
+        securityType: error.securityType,
+      },
+      { status: 422 },
+    );
+  }
   return error instanceof ZodError
     ? validationError(error)
     : liveDataUnavailable();

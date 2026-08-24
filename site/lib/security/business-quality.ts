@@ -94,7 +94,7 @@ export type BusinessQualityAnalysis = {
   };
 };
 
-export const BUSINESS_QUALITY_MODEL_VERSION = "2026-07-23.1";
+export const BUSINESS_QUALITY_MODEL_VERSION = "2026-08-12.1";
 
 const isFiniteNumber = (value: number | null | undefined): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -189,7 +189,7 @@ const returnInterpretations = (options: {
     options.returnOnInvestedCapital === null
       ? "Operating profit after tax and invested capital are required."
       : options.returnOnInvestedCapital >= 0.15
-        ? "A return above 15% can support compounding when reinvestment opportunities persist."
+        ? "A return of at least 15% can support compounding when reinvestment opportunities persist."
         : "Compare this return with the company’s cost of capital and its direction over time.",
   assets:
     options.returnOnAssets === null
@@ -201,11 +201,12 @@ const returnInterpretations = (options: {
 
 export function medianFinite(
   values: Array<number | null>,
+  minimumCount = 1,
 ): number | null {
   const usable = values
     .filter(isFiniteNumber)
     .sort((left, right) => left - right);
-  if (usable.length === 0) return null;
+  if (usable.length < minimumCount) return null;
   const midpoint = Math.floor(usable.length / 2);
   return usable.length % 2
     ? usable[midpoint]
@@ -357,24 +358,18 @@ const calculateOpportunities = (options: {
 export function calculatePeerEconomics(
   peers: PeersResponse["peers"],
 ): PeerEconomics[] {
-  return peers.slice(0, 8).map((peer) => ({
-    symbol: peer.symbol,
-    company: peer.company.value ?? peer.symbol,
-    netMargin:
-      peer.pe.value !== null &&
-      peer.pe.value > 0 &&
-      peer.ps.value !== null &&
-      peer.ps.value > 0
-        ? peer.ps.value / peer.pe.value
+  return peers.slice(0, 8).map((peer) => {
+    return {
+      symbol: peer.symbol,
+      company: peer.company.value ?? peer.symbol,
+      netMargin: isFiniteNumber(peer.netMargin.value)
+        ? peer.netMargin.value
         : null,
-    returnOnEquity:
-      peer.pe.value !== null &&
-      peer.pe.value > 0 &&
-      peer.pb.value !== null &&
-      peer.pb.value > 0
-        ? peer.pb.value / peer.pe.value
+      returnOnEquity: isFiniteNumber(peer.returnOnEquity.value)
+        ? peer.returnOnEquity.value
         : null,
-  }));
+    };
+  });
 }
 
 export function calculateBusinessQuality(
@@ -386,32 +381,26 @@ export function calculateBusinessQuality(
       ? profitability.history
       : summary.financials.annual;
   const currentPeriodData = latestCompletePeriod(annual);
-  const revenue =
-    profitability?.metrics.revenue ??
-    metricValue(summary, "revenue") ??
-    currentPeriodData?.revenue ??
-    null;
+  const hasProfitabilitySnapshot = profitability !== null;
+  const revenue = hasProfitabilitySnapshot
+    ? profitability.metrics.revenue
+    : metricValue(summary, "revenue") ?? currentPeriodData?.revenue ?? null;
   const grossProfit = profitability?.metrics.grossProfit ?? null;
   const ebit = profitability?.metrics.ebit ?? null;
   const ebitda = profitability?.metrics.ebitda ?? null;
-  const netIncome =
-    profitability?.metrics.netIncome ??
-    metricValue(summary, "netIncome") ??
-    currentPeriodData?.netIncome ??
-    null;
-  const freeCashFlow =
-    profitability?.metrics.freeCashFlow ??
-    metricValue(summary, "freeCashFlow") ??
-    currentPeriodData?.freeCashFlow ??
-    null;
+  const netIncome = hasProfitabilitySnapshot
+    ? profitability.metrics.netIncome
+    : metricValue(summary, "netIncome") ?? currentPeriodData?.netIncome ?? null;
+  const freeCashFlow = hasProfitabilitySnapshot
+    ? profitability.metrics.freeCashFlow
+    : metricValue(summary, "freeCashFlow");
   const operatingCashFlow =
     profitability?.metrics.operatingCashFlow ?? null;
   const grossMargin =
     profitability?.metrics.grossMargin ??
     safeDivide(grossProfit, revenue);
   const operatingMargin =
-    profitability?.metrics.operatingMargin ??
-    safeDivide(ebit, revenue);
+    profitability?.metrics.operatingMargin ?? null;
   const netMargin =
     profitability?.metrics.netMargin ??
     safeDivide(netIncome, revenue);
@@ -428,18 +417,21 @@ export function calculateBusinessQuality(
     netIncome !== null && netIncome > 0
       ? safeDivide(freeCashFlow, netIncome)
       : null;
-  const rawRoe = metricValue(summary, "roe");
-  const returnOnEquity =
-    profitability?.metrics.returnOnEquity ??
-    (rawRoe === null ? null : rawRoe / 100);
+  const rawRoe = hasProfitabilitySnapshot ? null : metricValue(summary, "roe");
+  const returnOnEquity = hasProfitabilitySnapshot
+    ? profitability.metrics.returnOnEquity
+    : rawRoe === null
+      ? null
+      : rawRoe / 100;
   const returnOnAssets =
     profitability?.metrics.returnOnAssets ?? null;
   const returnOnInvestedCapital =
     profitability?.metrics.returnOnInvestedCapital ?? null;
   const assetTurnover =
     profitability?.metrics.assetTurnover ?? null;
-  const marketCap =
-    profitability?.quote.marketCap ?? summary.quote.marketCap.value;
+  const marketCap = hasProfitabilitySnapshot
+    ? profitability.quote.marketCap
+    : summary.quote.marketCap.value;
   const debt = metricValue(summary, "debt");
   const cash = metricValue(summary, "cash");
   const netDebt =
@@ -558,7 +550,7 @@ export function calculateBusinessQuality(
       earningsConsistency,
       1,
       10,
-      "Full credit when every displayed annual period is profitable.",
+      "Full credit when every usable annual net-income period is profitable.",
     ),
   ].filter((component): component is ScoreComponent => component !== null);
   const availableMaximum = components.reduce(
@@ -592,7 +584,7 @@ export function calculateBusinessQuality(
       (value) => value >= 0.8,
       "Free cash flow covers at least 80% of net income.",
       "Free cash flow covers less than 80% of net income.",
-      "Positive net income and free cash flow are required.",
+      "Positive net income and a returned free-cash-flow value are required.",
     ),
     check(
       returnOnInvestedCapital !== null
@@ -616,8 +608,8 @@ export function calculateBusinessQuality(
       "Earnings consistency",
       earningsConsistency,
       (value) => value === 1,
-      "Every displayed annual period is profitable.",
-      "At least one displayed annual period is loss-making.",
+      "Every usable annual net-income period is profitable.",
+      "At least one usable annual net-income period is loss-making.",
       "Annual earnings history is unavailable.",
     ),
   ];

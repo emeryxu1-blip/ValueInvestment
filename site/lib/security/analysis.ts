@@ -16,6 +16,7 @@ import {
 } from "../ainvest/requests";
 import {
   catalogEntryForMarketCode,
+  supportsCompanyAnalysis,
   symbolFromMarketCode,
   type ResolvedSecurity,
 } from "../market-codes";
@@ -24,6 +25,14 @@ import {
   calculateDcfValuation,
   calculateRelativeValuation,
 } from "./valuation";
+import {
+  MINIMUM_PEER_SAMPLE,
+  PEER_CANDIDATE_LIMIT,
+  hasMinimumPeerCoverage,
+  peerMarketCodeBatches,
+  selectComparablePeerRows,
+} from "./peer-selection.ts";
+import { assertCompanyAnalysisApplicable } from "./company-analysis-applicability.ts";
 
 function peerFromRow(row: NormalizedSnapshotRow): AnalysisPeer {
   const catalog = catalogEntryForMarketCode(row.symbolCode);
@@ -36,38 +45,93 @@ function peerFromRow(row: NormalizedSnapshotRow): AnalysisPeer {
   };
 }
 
-async function getRelativePeers(
+async function relatedMarketCodes(
   resolved: ResolvedSecurity,
-  row: NormalizedSnapshotRow,
-): Promise<{ peers: AnalysisPeer[]; peerReason?: string }> {
-  const sectorCode = stringValue(row, "sectorCode");
-  if (!sectorCode) {
-    return {
-      peers: [],
-      peerReason: "No supported industry relationship was returned.",
-    };
-  }
+  sectorCode: string,
+): Promise<string[]> {
   const relation = (await fetchAInvest(
     "relation",
     buildRelationRequest(sectorCode),
   )) as {
     data?: { data?: Array<{ v?: unknown }> };
   };
-  const marketCodes = (relation.data?.data ?? [])
+  const seen = new Set<string>();
+  return (relation.data?.data ?? [])
     .map((item) => item.v)
     .filter((value): value is string => typeof value === "string")
-    .filter((value) => value !== resolved.marketCode)
-    .slice(0, 8);
-  if (marketCodes.length === 0) {
-    return { peers: [], peerReason: "No supported comparable companies were returned." };
-  }
-  const peerPayload = await fetchAInvest(
-    "snapshot",
-    buildAnalysisPeerSnapshotRequest(marketCodes),
+    .filter((value) => {
+      if (value === resolved.marketCode || seen.has(value)) return false;
+      seen.add(value);
+      const candidate = catalogEntryForMarketCode(value);
+      return candidate !== null && supportsCompanyAnalysis(candidate);
+    })
+    .slice(0, PEER_CANDIDATE_LIMIT);
+}
+
+async function analysisPeerRows(
+  marketCodes: string[],
+): Promise<NormalizedSnapshotRow[]> {
+  const payloads = await Promise.all(
+    peerMarketCodeBatches(marketCodes).map((batch) =>
+      fetchAInvest("snapshot", buildAnalysisPeerSnapshotRequest(batch)),
+    ),
   );
-  return {
-    peers: normalizeSnapshot(peerPayload).rows.map(peerFromRow),
-  };
+  return payloads.flatMap((payload) => normalizeSnapshot(payload).rows);
+}
+
+async function getRelativePeers(
+  resolved: ResolvedSecurity,
+  row: NormalizedSnapshotRow,
+): Promise<{ peers: AnalysisPeer[]; peerReason?: string }> {
+  const industryCode = stringValue(row, "sectorCode");
+  const sectorGroupCode = stringValue(row, "sectorGroupCode");
+  if (!industryCode && !sectorGroupCode) {
+    return {
+      peers: [],
+      peerReason: "No supported industry relationship was returned.",
+    };
+  }
+  const primaryCodes = industryCode
+    ? await relatedMarketCodes(resolved, industryCode)
+    : [];
+  let candidateRows = await analysisPeerRows(primaryCodes);
+  let selectedRows = selectComparablePeerRows(row, candidateRows);
+  let usedBroaderSectorGroup = false;
+  if (
+    !hasMinimumPeerCoverage(selectedRows, "valuation") &&
+    sectorGroupCode &&
+    sectorGroupCode !== industryCode
+  ) {
+    usedBroaderSectorGroup = true;
+    const seen = new Set(primaryCodes);
+    const broaderCodes = (await relatedMarketCodes(resolved, sectorGroupCode))
+      .filter((marketCode) => !seen.has(marketCode));
+    candidateRows = [...candidateRows, ...(await analysisPeerRows(broaderCodes))];
+    selectedRows = selectComparablePeerRows(row, candidateRows);
+  }
+  const hasCoverage = hasMinimumPeerCoverage(selectedRows, "valuation");
+  const reasons = [
+    ...(usedBroaderSectorGroup
+      ? [
+          "The industry peer set was too thin, so the displayed comparables also include companies from the broader provider sector group.",
+        ]
+      : []),
+    ...(!hasCoverage
+      ? [
+          `The comparable set does not provide at least ${MINIMUM_PEER_SAMPLE} positive observations for every displayed peer multiple, so incomplete medians remain blank.`,
+        ]
+      : []),
+  ];
+  return selectedRows.length > 0
+    ? {
+        peers: selectedRows.map(peerFromRow),
+        ...(reasons.length > 0 ? { peerReason: reasons.join(" ") } : {}),
+      }
+    : {
+        peers: [],
+        peerReason:
+          "No peers met the minimum valuation coverage and market-cap comparability rules.",
+      };
 }
 
 export async function getSecurityAnalysis(
@@ -83,6 +147,7 @@ export async function getSecurityAnalysis(
   if (!row || row.symbolCode !== resolved.marketCode) {
     throw new Error("The market data service returned no matching security row.");
   }
+  assertCompanyAnalysisApplicable(resolved, row);
   const liveCompany = stringValue(row, "company");
   const peerResult =
     view === "relative-valuation"
@@ -118,5 +183,14 @@ export async function getSecurityAnalysis(
       : view === "relative-valuation"
         ? calculateRelativeValuation(response)
         : null;
+  if (view === "dcf-valuation") {
+    for (const moduleKey of [
+      "fairValueModule",
+      "growthForecastModule",
+      "earningsRevenueModule",
+    ]) {
+      delete response.metrics[moduleKey];
+    }
+  }
   return response;
 }

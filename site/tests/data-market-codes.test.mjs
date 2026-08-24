@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   resolveMarketCode,
   routeExchangeForMarketCode,
+  supportsCompanyAnalysis,
   symbolFromMarketCode,
+  unsupportedCompanyAnalysisReason,
 } from "../lib/market-codes.ts";
 import {
   MARKET_CODE_BY_ROUTE,
@@ -24,6 +26,16 @@ test("resolves exchange and ticker through the generated catalog", () => {
   assert.equal(resolveMarketCode("arca", "SPY")?.marketCode, "169:SPY");
   assert.equal(resolveMarketCode("nasdaq", "JPM"), null);
   assert.equal(resolveMarketCode("nasdaq", "NOT-A-REAL-SYMBOL"), null);
+});
+
+test("gates company analysis by catalog security type", () => {
+  const common = resolveMarketCode("nasdaq", "MSFT");
+  const fund = resolveMarketCode("arca", "SPY");
+  assert.ok(common);
+  assert.ok(fund);
+  assert.equal(supportsCompanyAnalysis(common), true);
+  assert.equal(supportsCompanyAnalysis(fund), false);
+  assert.match(unsupportedCompanyAnalysisReason(fund), /security type CE/i);
 });
 
 test("keeps route metadata deterministic and distinguishes ARCA from NYSE", () => {

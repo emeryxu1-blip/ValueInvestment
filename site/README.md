@@ -3,17 +3,28 @@
 A stock screener and security-research workspace built with Next.js, React,
 TypeScript, Tailwind, Cloudflare Workers, and D1.
 
-The browser renders charts and instant valuation previews. Next.js route
+The browser renders charts and provider-backed valuation evidence. Next.js route
 handlers running in a Cloudflare Worker own market-data access, normalization,
 canonical valuation and quality models, and workspace APIs. D1 persists
-anonymous-user notes, sentiment, watch prices, saved screener definitions, and
-saved result-page baselines. Market-data credentials never enter browser
-bundles or API responses.
+anonymous saved-screener definitions and the ranked Top 1,000 market-cap
+universe together with a durable daily screener snapshot. Each snapshot stores
+normalized source metrics, precomputed filter memberships, and one compact
+client payload. The screener downloads that payload once, then filters, sorts,
+and paginates locally without another data request. Market-data credentials
+never enter browser bundles or API responses.
+
+Every screener request applies the Top 1,000 membership together with an
+immutable NYSE/NASDAQ scope. Five-year operating-margin stability and trend are
+derived from annual provider fundamentals in the server-side scan. The daily
+snapshot also precomputes value-investing memberships for a margin of safety ≥
+20%, positive P/E ≤ 15×, FCF yield ≥ 5%, positive EV / EBITDA ≤ 10×, FCF /
+earnings ≥ 80%, ROIC ≥ 15%, and net debt / positive FCF ≤ 1.5×. Missing or
+invalid denominators fail closed.
 
 ## Why this deploys to Workers, not Pages
 
 This is a full-stack Next.js application with dynamic routes, server-side
-rendering, D1 access, a Cron Trigger, and a server-only upstream credential.
+rendering, D1 access, Cron Triggers, and a server-only upstream credential.
 Cloudflare's Pages path for Next.js is static export; Cloudflare directs
 full-stack Next.js applications to Workers.
 
@@ -26,16 +37,42 @@ be created as a Workers deployment rather than a Pages project.
 
 See [docs/cloudflare-architecture.md](docs/cloudflare-architecture.md) for the
 deployment decision and [docs/calculation-ownership.md](docs/calculation-ownership.md)
-for the calculation and persistence audit.
+for calculation and persistence ownership. The detail-page audit and field
+lineage are recorded in
+[docs/security-detail-data-lineage.md](docs/security-detail-data-lineage.md).
 
 ## Prerequisites
 
 - Node.js `>=22.13.0`
 - A Cloudflare account and Wrangler authentication for production deployment
-- A valid upstream market-data cookie and permission to use and redistribute
-  that provider's data
+- A valid AInvest account and permission to use and redistribute that
+  provider's data
 
 ## Local setup
+
+The repository keeps all local environment configuration in one private file:
+`site/.dev.vars`. Copy the tracked template, then fill in the credentials that
+will be shared privately with each trusted contributor:
+
+```bash
+cp .dev.vars.example .dev.vars
+chmod 600 .dev.vars
+```
+
+```dotenv
+AINVEST_EMAIL=your-account@example.com
+AINVEST_PASSWORD=your-password
+```
+
+Do not commit `.dev.vars`, paste it into issues, or send it through a public
+channel. The development wrapper loads it before starting Next.js. The server
+retrieves and caches an AInvest session on demand, then signs in again and
+retries once when AInvest rejects an expired session. `AINVEST_C_COOKIE` is an
+optional legacy fallback and should normally remain commented out. If
+authentication is unavailable or rejected, market-data APIs fail closed
+instead of returning fabricated fallback values.
+
+Then install and start the application:
 
 ```bash
 npm install
@@ -43,11 +80,6 @@ npm run cf:typegen
 npm run db:migrate:local
 npm run dev
 ```
-
-The development wrapper reads `../skills/Cauth.json` in memory and exposes only
-the composed upstream cookie to the local Next.js process. Alternatively, set
-`AINVEST_C_COOKIE` in your shell. If the credential is missing or expired,
-market-data APIs fail closed instead of returning fabricated fallback values.
 
 Open the printed local URL, then use:
 
@@ -63,53 +95,83 @@ Local D1 state is kept under `.wrangler/` and is ignored by Git.
 
 ## Cloudflare deployment
 
-1. Authenticate and create the D1 database:
+1. Authenticate with Cloudflare:
 
    ```bash
    npx wrangler login
-   npx wrangler d1 create value-investment
    ```
 
-2. Replace the placeholder `database_id` in `wrangler.jsonc` with the ID printed
-   by Wrangler.
+   The current Cloudflare account already has the `value-investment` D1
+   database bound in `wrangler.jsonc`. When deploying to a different account,
+   create a new database with `npx wrangler d1 create value-investment` and
+   replace the checked-in `database_id`.
 
-3. Regenerate binding types and apply the production migration:
+2. Regenerate binding types and apply the production migration:
 
    ```bash
    npm run cf:typegen
    npm run db:migrate:remote
    ```
 
-4. Store the server-only market-data cookie as a Worker secret:
+3. Store the server-only AInvest login as Worker secrets:
 
    ```bash
-   npx wrangler secret put AINVEST_C_COOKIE
+   npx wrangler secret put AINVEST_EMAIL
+   npx wrangler secret put AINVEST_PASSWORD
    ```
 
-   Enter a value shaped like `userid=…; sessionid=…`. Never add it to
-   `wrangler.jsonc`, an environment file, or source control.
+   Never add either value to `wrangler.jsonc`, a browser environment variable,
+   or source control. Remove an existing `AINVEST_C_COOKIE` secret after the
+   credential pair is installed; it is only a fallback for cookie-only legacy
+   deployments.
 
-5. Build, test, and deploy:
+4. Build, test, and deploy:
 
    ```bash
    npm test
    npm run deploy
    ```
 
-6. Smoke-test the security summary, valuation, business-quality, screener, and
-   workspace create/read/update/delete flows before attaching the production
-   domain.
+5. Smoke-test the security summary, valuation, business-quality, screener, and
+   saved-screener create/read/update/delete flows before attaching the
+   production domain.
 
-The production deployment is blocked until the placeholder D1 database ID is
-replaced. The application does not ship a production credential or database ID.
+The application does not ship the production market-data credential; it remains
+an encrypted Worker secret.
 
 The Worker applies an initial Cloudflare-native limit of 120 security API
 requests and 30 screener requests per minute per connecting IP. Recalibrate
 these coarse anonymous limits after observing production traffic.
 
+## Contributing
+
+1. Fork the GitHub repository or create a branch from `main`.
+2. Install Node.js `>=22.13.0` and npm.
+3. Follow [Local setup](#local-setup), including the private `.dev.vars` file.
+4. Make focused changes and add or update tests for behavior changes.
+5. Run the relevant checks before opening a pull request:
+
+   ```bash
+   npm run typecheck
+   npm run lint
+   npm test
+   ```
+
+6. Review `git diff` and confirm that `.dev.vars`, `.wrangler/`, build output,
+   and credentials are not staged. Open a pull request against `main` with a
+   short description, test commands, migration notes, and screenshots for UI
+   changes.
+
+Never commit credentials, Cloudflare API tokens, generated local databases, or
+provider cookies. Use the tracked `.dev.vars.example` as the configuration
+shape, and ask the project owner for private values through a separate channel.
+For production work, contributors should use their own Cloudflare account or
+explicitly authorized access; do not share Wrangler tokens in the repository.
+
 ## Commands
 
-- `npm run dev` — start local Next.js with OpenNext's Cloudflare bindings
+- `npm run dev` — load ignored local secrets and start Next.js with OpenNext's
+  Cloudflare bindings
 - `npm run build` — create the standard Next.js production build
 - `npm run build:worker` — package Next.js as an OpenNext Cloudflare Worker
 - `npm run preview` — build and preview the Worker locally with Wrangler
@@ -128,23 +190,46 @@ these coarse anonymous limits after observing production traffic.
 
 The current workspace is anonymous and browser-scoped. A random 256-bit opaque,
 HttpOnly cookie identifies a workspace; D1 stores only its SHA-256 digest. There
-are no accounts or cross-device synchronization yet. Legacy `localStorage`
-workspace data is imported once after the first successful D1 connection. An
-attached daily Cron Trigger removes expired anonymous sessions and cascades
-their workspace rows.
-
-Saved screener baselines currently represent the visible result page, not a
-complete market-universe snapshot. A global screener snapshot and scheduled
-market-data refresh remain separate production-scale ingestion work.
+are no accounts or cross-device synchronization yet. It persists saved-screener
+definitions only. Legacy `localStorage` saved-screener data is imported once
+after the first successful D1 connection. The screener Cron Trigger uses a
+DST-safe UTC grid and a New York wall-clock gate. It attempts the server-side
+calculation at 08:00, 08:30, and 09:00 ET on US equity trading days only, before
+the 09:30 ET regular-session open. The first successful attempt atomically
+publishes a complete D1 generation; later attempts are idempotent no-ops unless
+an earlier attempt failed. A durable run ledger keyed by `YYYY-MM-DD` records the attempt,
+status, and stored generation. Daily-linked generations are retained when
+routine cleanup removes abandoned or superseded non-daily generations.
+Weekends, recurring full-day exchange holidays, and confirmed one-off closures
+are skipped. The same accepted trigger removes
+expired anonymous sessions. A separate trigger refreshes the ranked Top 1,000
+company universe on the last UTC day of every month; the next trading-day
+calculation publishes results for that universe.
+Public screener requests only read an active stored generation; a newly migrated
+empty database remains unavailable until the scheduled refresh or an explicit
+administrative seed publishes one. The compact screener endpoint reads one
+generation record and is cached at the edge for five minutes; error responses
+and prior-schema rollout responses are never cached. Filter-schema versioning
+keeps older stored generations readable while hiding controls that require newer
+source metrics.
 
 ## Known production limitations
 
-- The full-market screener cache still lives in Worker isolate memory; it must
-  move to a scheduled Worker/Queue plus a generation-based D1 snapshot before
-  global counts are production-grade.
-- Saved screener baselines compare only the visible result page.
-- Interactive DCF assumptions are not persisted unless a future “Save model”
-  feature stores a versioned run.
+- Stored screener quotes reflect the latest successful daily snapshot rather
+  than every intraday tick. Security-research pages still retrieve live quotes
+  when opened.
+- Cross-sector value multiples are starting points for research, not
+  recommendations. Banks, insurers, REITs, utilities, and cyclical businesses
+  need sector-appropriate or normalized denominators before an investment
+  decision.
+- Company DCF, relative-valuation, peer, and business-quality views apply only
+  to catalog common and depositary equities. ETFs, preferreds, warrants, units,
+  rights, and debt receive an explicit unsupported-security response instead of
+  a mostly blank corporate model.
+- Current provider-backed DCF values are recomputed when requested. Historical
+  saved valuation runs are not persisted unless a future “Save model” feature
+  stores normalized inputs, provenance, and a model version.
 - Anonymous workspaces cannot be recovered or synchronized across devices.
-- The upstream session cookie can expire, and provider data-use and
-  redistribution rights remain a launch gate.
+- Automated upstream sign-in depends on AInvest's private web-login contract;
+  provider availability, data-use, and redistribution rights remain launch
+  gates.

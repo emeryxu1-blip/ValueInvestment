@@ -1,14 +1,13 @@
-import type {
-  ScreenerSort,
-  SecurityAnalysisView,
-  SortOrder,
-} from "../contracts";
+import type { SecurityAnalysisView } from "../contracts";
 
 export type IndicatorRequest = {
   id: string;
   req_unique_id: string;
   attr?: Record<string, unknown>;
 };
+
+export const PEER_RELATION_LIMIT = 100;
+export const PEER_SNAPSHOT_LIMIT = 100;
 
 export const SCREENER_INDICATORS: IndicatorRequest[] = [
   { id: "55", req_unique_id: "company" },
@@ -35,33 +34,39 @@ export const SCREENER_INDICATORS: IndicatorRequest[] = [
   { id: "parent_holder_net_profit_ttm", req_unique_id: "netIncome" },
   { id: "free_cash_flow_ttm", req_unique_id: "freeCashFlow" },
   { id: "debt_equity_ratio", req_unique_id: "debtToEquity" },
+  { id: "ev_ebitda_ratio_ttm", req_unique_id: "evToEbitda" },
+  {
+    id: "capital_invested_return_ratio_ttm",
+    req_unique_id: "returnOnInvestedCapital",
+  },
+  { id: "net_debt", req_unique_id: "netDebt" },
   { id: "ext_metric_sector_1_name", req_unique_id: "sector" },
+  {
+    id: "stockdiag_fundamental_past_revenuebreakdown",
+    req_unique_id: "operatingMarginHistory",
+  },
 ];
 
-const SCREENER_SORT_POSITION: Partial<Record<ScreenerSort, number>> = {
-  company: 0,
-  price: 1,
-  changePercent: 2,
-  marketCap: 3,
-  fairValue: 4,
-  pe: 5,
-  revenueGrowth: 6,
-};
-
-export function buildScreenerSnapshotRequest(options: {
-  begin: number;
-  count: number;
-  sort?: ScreenerSort;
-  order?: SortOrder;
-  fullSymbols?: boolean;
-}) {
-  const position = SCREENER_SORT_POSITION[options.sort ?? "marketCap"] ?? 3;
+export function buildTopMarketCapUniverseRequest() {
   return {
     symbol: [{ type: "block_id", value: ["C191"] }],
+    indicator: [
+      { id: "55", req_unique_id: "company" },
+      { id: "total_market_value", req_unique_id: "marketCap" },
+    ],
+    sort: [{ pos: 1, order: "desc" }],
+    page: { begin: 0, count: 1000 },
+    full_symbols: true,
+    res_symbol_type: "market_code",
+  };
+}
+
+export function buildScreenerUniverseSnapshotRequest(marketCodes: string[]) {
+  const values = marketCodes.slice(0, 200);
+  return {
+    symbol: [{ type: "market_code", value: values }],
     indicator: SCREENER_INDICATORS,
-    sort: [{ pos: position, order: options.order ?? "desc" }],
-    page: { begin: options.begin, count: Math.min(1000, options.count) },
-    ...(options.fullSymbols ? { full_symbols: true } : {}),
+    page: { begin: 0, count: values.length },
     res_symbol_type: "market_code",
   };
 }
@@ -97,6 +102,7 @@ export const SECURITY_INDICATORS: IndicatorRequest[] = [
     attr: { trade_class: "intraday", time_period: "day_1" },
   },
   { id: "total_market_value", req_unique_id: "marketCap" },
+  { id: "employee_number", req_unique_id: "employeeCount" },
   { id: "6", req_unique_id: "previousClose", attr: { trade_class: "intraday" } },
   { id: "8", req_unique_id: "dayHigh", attr: { trade_class: "intraday" } },
   { id: "9", req_unique_id: "dayLow", attr: { trade_class: "intraday" } },
@@ -121,6 +127,10 @@ export const SECURITY_INDICATORS: IndicatorRequest[] = [
   },
   { id: "annualized_roe", req_unique_id: "roe" },
   {
+    id: "sale_net_interest_ratio_ttm",
+    req_unique_id: "companyAnalysisNetMargin",
+  },
+  {
     id: "operating_income_total_ttm_yoy",
     req_unique_id: "revenueGrowth",
   },
@@ -128,12 +138,9 @@ export const SECURITY_INDICATORS: IndicatorRequest[] = [
   { id: "dividend_ratio_pct_ttm", req_unique_id: "dividendYield" },
   { id: "debt_equity_ratio", req_unique_id: "debtToEquity" },
   { id: "ext_metric_sector_1_name", req_unique_id: "sector" },
+  { id: "ext_metric_sector_3_code", req_unique_id: "sectorGroupCode" },
   { id: "ext_metric_sector_4_name", req_unique_id: "industry" },
   { id: "ext_metric_sector_4_code", req_unique_id: "sectorCode" },
-  { id: "fundAnalystBuyNum", req_unique_id: "analystBuy" },
-  { id: "fundAnalystHoldNum", req_unique_id: "analystHold" },
-  { id: "fundAnalystSellNum", req_unique_id: "analystSell" },
-  { id: "analyst_rating_newest", req_unique_id: "analystRating" },
   {
     id: "stockdiag_fundamental_past_earningsrevenue",
     req_unique_id: "earningsRevenueModule",
@@ -141,10 +148,6 @@ export const SECURITY_INDICATORS: IndicatorRequest[] = [
   {
     id: "stockdiag_fundamental_dividend_stability",
     req_unique_id: "dividendStabilityModule",
-  },
-  {
-    id: "stockdiag_fundamental_future_growthforecast",
-    req_unique_id: "growthForecastModule",
   },
 ];
 
@@ -166,7 +169,13 @@ const ANALYSIS_COMMON_INDICATORS: IndicatorRequest[] = [
     attr: { trade_class: "intraday", time_period: "day_1" },
   },
   { id: "total_market_value", req_unique_id: "marketCap" },
+  { id: "employee_number", req_unique_id: "employeeCount" },
   { id: "ext_metric_sector_1_name", req_unique_id: "sector" },
+  {
+    id: "sale_net_interest_ratio_ttm",
+    req_unique_id: "companyAnalysisNetMargin",
+  },
+  { id: "ext_metric_sector_3_code", req_unique_id: "sectorGroupCode" },
   { id: "ext_metric_sector_4_name", req_unique_id: "industry" },
   { id: "ext_metric_sector_4_code", req_unique_id: "sectorCode" },
 ];
@@ -175,6 +184,10 @@ const DCF_ANALYSIS_INDICATORS: IndicatorRequest[] = [
   {
     id: "stockdiag_fundamental_value_dcf",
     req_unique_id: "fairValueModule",
+  },
+  {
+    id: "stockdiag_fundamental_future_growthforecast",
+    req_unique_id: "growthForecastModule",
   },
   { id: "operating_income_total_ttm", req_unique_id: "revenue" },
   { id: "parent_holder_net_profit_ttm", req_unique_id: "netIncome" },
@@ -274,13 +287,18 @@ export function buildSecurityAnalysisRequest(
 }
 
 export function buildAnalysisPeerSnapshotRequest(marketCodes: string[]) {
-  const values = marketCodes.slice(0, 8);
+  const values = marketCodes.slice(0, PEER_SNAPSHOT_LIMIT);
   return {
     symbol: [{ type: "market_code", value: values }],
     indicator: [
       { id: "55", req_unique_id: "company" },
       { id: "10", req_unique_id: "price", attr: { trade_class: "intraday" } },
       { id: "total_market_value", req_unique_id: "marketCap" },
+      { id: "parent_holder_net_profit_ttm", req_unique_id: "netIncome" },
+      { id: "employee_number", req_unique_id: "employeeCount" },
+      { id: "ext_metric_sector_3_code", req_unique_id: "sectorGroupCode" },
+      { id: "ext_metric_sector_4_name", req_unique_id: "industry" },
+      { id: "ext_metric_sector_4_code", req_unique_id: "sectorCode" },
       ...RELATIVE_ANALYSIS_INDICATORS,
     ],
     page: { begin: 0, count: values.length },
@@ -289,17 +307,29 @@ export function buildAnalysisPeerSnapshotRequest(marketCodes: string[]) {
 }
 
 export function buildPeerSnapshotRequest(marketCodes: string[]) {
+  const values = marketCodes.slice(0, PEER_SNAPSHOT_LIMIT);
   return {
-    symbol: [{ type: "market_code", value: marketCodes.slice(0, 12) }],
+    symbol: [{ type: "market_code", value: values }],
     indicator: [
       { id: "55", req_unique_id: "company" },
       { id: "10", req_unique_id: "price", attr: { trade_class: "intraday" } },
       { id: "total_market_value", req_unique_id: "marketCap" },
+      { id: "operating_income_total_ttm", req_unique_id: "revenue" },
+      { id: "parent_holder_net_profit_ttm", req_unique_id: "netIncome" },
+      { id: "employee_number", req_unique_id: "employeeCount" },
+      { id: "ext_metric_sector_3_code", req_unique_id: "sectorGroupCode" },
+      { id: "ext_metric_sector_4_name", req_unique_id: "industry" },
+      { id: "ext_metric_sector_4_code", req_unique_id: "sectorCode" },
       { id: "pe_ttm", req_unique_id: "pe" },
       { id: "pb_mrq", req_unique_id: "pb" },
       { id: "ps_ttm", req_unique_id: "ps" },
+      { id: "sale_net_interest_ratio_ttm", req_unique_id: "netMargin" },
+      {
+        id: "index_weighted_avg_roe_ttm",
+        req_unique_id: "returnOnEquity",
+      },
     ],
-    page: { begin: 0, count: Math.min(12, marketCodes.length) },
+    page: { begin: 0, count: values.length },
     res_symbol_type: "market_code",
   };
 }
@@ -309,7 +339,7 @@ export function buildRelationRequest(sectorCode: string) {
     relation: "component",
     symbol: sectorCode,
     symbol_type: "market_code",
-    page: { begin: 0, count: 12 },
+    page: { begin: 0, count: PEER_RELATION_LIMIT },
   };
 }
 
@@ -333,7 +363,7 @@ export function buildSeriesRequest(
   range: string,
 ) {
   const count = pointsForRange(range);
-  const quarterly = group === "eps" || group === "financials" || group === "targets";
+  const quarterly = group === "eps" || group === "financials";
   const timePeriod = quarterly ? "quarter" : "day_1";
   const indicators: Record<string, IndicatorRequest[]> = {
     price: [
@@ -359,18 +389,6 @@ export function buildSeriesRequest(
       {
         id: "parent_holder_net_profit_ttm",
         req_unique_id: "netIncome",
-        attr: { time_period: "quarter" },
-      },
-      {
-        id: "free_cash_flow_ttm",
-        req_unique_id: "freeCashFlow",
-        attr: { time_period: "quarter" },
-      },
-    ],
-    targets: [
-      {
-        id: "analyst_target_price_latest",
-        req_unique_id: "target",
         attr: { time_period: "quarter" },
       },
     ],

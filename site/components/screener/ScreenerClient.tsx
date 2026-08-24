@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import {
   ArrowDown,
   ArrowLeft,
@@ -19,7 +20,6 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -27,16 +27,23 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
-  type CSSProperties,
   type FormEvent,
 } from "react";
 import {
   COLUMN_OPTIONS,
   DEFAULT_COLUMNS,
   DEFAULT_FILTERS,
+  deriveScreenerView,
   FILTER_LIBRARY,
+  filterMatchesSearch,
+  isFilterSupportedBySnapshot,
+  isRequiredUniverseFilter,
   normalizeScreenerPayload,
+  SCREENER_CLIENT_SNAPSHOT_SCHEMA_VERSION,
+  withRequiredUniverseFilters,
+  withSnapshotCompatibleFilters,
 } from "./screener-data";
 import { ScreenerModal } from "./ScreenerModal";
 import type {
@@ -54,15 +61,14 @@ const STORAGE_KEY = "value-workbench:saved-screeners:v1";
 type SavedScreenerApi = Omit<SavedScreen, "savedAt"> & {
   createdAt: string;
   updatedAt: string;
-  baselineCapturedAt: string;
 };
 
 const COLUMN_LABELS: Record<ColumnKey, string> = {
   price: "Last price",
   changePercent: "Price change",
   marketCap: "Market cap",
-  fairValue: "Fair value",
-  mispricing: "Mispricing",
+  fairValue: "Provider DCF",
+  mispricing: "Value gap",
   pe: "P/E",
   revenueGrowth: "Revenue growth",
 };
@@ -136,21 +142,23 @@ function safeExchange(stock: ScreenerStock) {
   return "nasdaq";
 }
 
-function logoHue(symbol: string) {
-  return [...symbol].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360;
-}
-
 function savedScreenFromApi(screen: SavedScreenerApi): SavedScreen {
   return {
     id: screen.id,
     name: screen.name,
-    filters: screen.filters,
+    filters: withRequiredUniverseFilters(screen.filters),
     columns: screen.columns,
     sortKey: screen.sortKey,
     sortOrder: screen.sortOrder,
-    symbols: screen.symbols,
     savedAt: screen.createdAt,
   };
+}
+
+function filterForStorage(filter: ScreenerFilter): ScreenerFilter {
+  const persisted = { ...filter };
+  delete persisted.description;
+  delete persisted.minimumSnapshotSchemaVersion;
+  return persisted;
 }
 
 async function workspaceJson<T>(response: Response): Promise<T> {
@@ -168,60 +176,6 @@ async function workspaceJson<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-function filterPayload(filters: ScreenerFilter[]) {
-  const result: Record<string, unknown> = {
-    fairValueGtePrice: filters.some((filter) => filter.id === "intrinsic-fair"),
-  };
-  for (const filter of filters) {
-    if (filter.field === "marketCap" && filter.operator === "gte" && typeof filter.value === "number") {
-      result.minMarketCap = Math.max(Number(result.minMarketCap) || 0, filter.value);
-    }
-    if (filter.field === "marketCap" && filter.operator === "lte" && typeof filter.value === "number") {
-      result.maxMarketCap = filter.value;
-    }
-    if (filter.field === "mispricing" && filter.operator === "gte" && typeof filter.value === "number") {
-      result.minMispricing = filter.value;
-    }
-    if (filter.field === "price" && filter.operator === "gte" && typeof filter.value === "number") {
-      result.minPrice = filter.value;
-    }
-    if (filter.field === "price" && filter.operator === "lte" && typeof filter.value === "number") {
-      result.maxPrice = filter.value;
-    }
-    if (filter.field === "changePercent" && filter.operator === "gte" && typeof filter.value === "number") {
-      result.minChangePercent = filter.value;
-    }
-    if (filter.field === "changePercent" && filter.operator === "lte" && typeof filter.value === "number") {
-      result.maxChangePercent = filter.value;
-    }
-    if (filter.field === "pe" && filter.operator === "lte" && typeof filter.value === "number") {
-      result.maxPe = filter.value;
-    }
-    if (filter.field === "pe" && filter.operator === "lt" && typeof filter.value === "number") {
-      result.maxPe = filter.value;
-    }
-    if (filter.field === "revenueGrowth" && filter.operator === "gte" && typeof filter.value === "number") {
-      result.minRevenueGrowth = Math.abs(filter.value) <= 1 ? filter.value * 100 : filter.value;
-    }
-    if (filter.field === "netIncome" && (filter.operator === "gt" || filter.operator === "gte")) {
-      result.positiveNetIncome = true;
-    }
-    if (filter.field === "freeCashFlow" && (filter.operator === "gt" || filter.operator === "gte")) {
-      result.positiveFreeCashFlow = true;
-    }
-    if (filter.field === "debtToEquity" && filter.operator === "lte" && typeof filter.value === "number") {
-      result.maxDebtToEquity = Math.abs(filter.value) <= 1 ? filter.value * 100 : filter.value;
-    }
-    if (filter.field === "sector" && filter.operator === "eq" && typeof filter.value === "string") {
-      result.sector = filter.value;
-    }
-    if (filter.field === "exchange" && filter.operator === "in" && Array.isArray(filter.value)) {
-      result.exchanges = filter.value;
-    }
-  }
-  return result;
-}
-
 function columnMetric(stock: ScreenerStock, column: ColumnKey) {
   return stock[column];
 }
@@ -236,24 +190,26 @@ function cellValue(stock: ScreenerStock, column: ColumnKey) {
 
 function InlineFilterLibrary({
   selected,
+  snapshotSchemaVersion,
   onToggle,
 }: {
   selected: ScreenerFilter[];
+  snapshotSchemaVersion: number | null;
   onToggle: (filter: ScreenerFilter) => void;
 }) {
   const [query, setQuery] = useState("");
-  const categories = ["Universe", "Valuation", "Momentum", "Quality", "Growth"] as const;
+  const categories = ["Universe", "Valuation", "Quality", "Growth"] as const;
   const selectedIds = new Set(selected.map((filter) => filter.id));
   const filtered = FILTER_LIBRARY.filter((filter) =>
-    `${filter.label} ${filter.category}`.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+    isFilterSupportedBySnapshot(filter, snapshotSchemaVersion),
+  ).filter((filter) => filterMatchesSearch(filter, query));
 
   return (
     <div className="inline-filter-workspace" aria-labelledby="filter-library-title">
       <div className="inline-filter-workspace__header">
         <div>
           <h3 id="filter-library-title">Filter library</h3>
-          <p>Select a criterion to add it. Select it again to remove it.</p>
+          <p>Select a criterion to add it. The Top 1,000 and NYSE/NASDAQ scopes always stay applied.</p>
         </div>
         <div className="filter-search">
           <Search size={17} aria-hidden="true" />
@@ -274,6 +230,9 @@ function InlineFilterLibrary({
           ) : null}
         </div>
       </div>
+      <p className="filter-library-guidance" role="note">
+        Screen matches are research candidates, not recommendations. Banks, insurers, REITs, utilities, and cyclicals require sector-appropriate, normalized measures.
+      </p>
       <div className="filter-library">
         {categories.map((category) => {
           const filters = filtered.filter((filter) => filter.category === category);
@@ -293,7 +252,6 @@ function InlineFilterLibrary({
                   <p>
                     {category === "Universe" && "Choose where to look"}
                     {category === "Valuation" && "Set the price discipline"}
-                    {category === "Momentum" && "Use today’s price direction"}
                     {category === "Quality" && "Look for financial resilience"}
                     {category === "Growth" && "Define the trajectory"}
                   </p>
@@ -303,19 +261,24 @@ function InlineFilterLibrary({
                 {filters.map((filter) => {
                   const active = selectedIds.has(filter.id);
                   const available = filter.available !== false;
+                  const locked = isRequiredUniverseFilter(filter.id);
                   return (
                     <button
-                      className={`filter-option${available ? "" : " is-unavailable"}`}
+                      className={`filter-option${available ? "" : " is-unavailable"}${locked ? " is-locked" : ""}`}
                       type="button"
                       key={filter.id}
                       aria-pressed={active}
-                      disabled={!available}
-                      title={filter.unavailableReason}
+                      aria-label={`${filter.label}. ${filter.shortLabel}`}
+                      aria-disabled={locked || !available}
+                      disabled={locked || !available}
+                      title={locked ? "This universe rule is always applied." : filter.unavailableReason}
                       onClick={() => onToggle(filter)}
                     >
                       <span className="filter-option__copy">
-                        <span>{filter.label}</span>
-                        {!available ? <small>{filter.unavailableReason}</small> : null}
+                        <span className="filter-option__title">{filter.label}</span>
+                        <small className="filter-option__terms">{filter.shortLabel}</small>
+                        {locked ? <small className="filter-option__status">Always applied</small> : null}
+                        {!available ? <small className="filter-option__status">{filter.unavailableReason}</small> : null}
                       </span>
                       {available ? (
                         <span className={`filter-option__check${active ? " is-active" : ""}`} aria-hidden="true">
@@ -429,7 +392,7 @@ function ScanBanner({ scan }: { scan: ScanState }) {
         <p>
           {scan.state === "error"
             ? "Some companies may be missing. Try again to resume the scan."
-            : "We’re comparing current prices with intrinsic values. Matches appear as each company is evaluated."}
+            : "We’re comparing stored prices with provider DCF values. Matches appear as each company is evaluated."}
         </p>
         {scan.state !== "error" ? (
           <div className="scan-progress" aria-label={`${percent}% of securities scanned`}>
@@ -457,19 +420,16 @@ function MetricValue({ stock, column }: { stock: ScreenerStock; column: ColumnKe
       ) : null}
       <span>{cellValue(stock, column)}</span>
       {column === "mispricing" && numeric !== null ? (
-        <small>{numeric > 1 ? "undervalued" : numeric < -1 ? "overvalued" : "near fair value"}</small>
+        <small>{numeric > 1 ? "positive gap" : numeric < -1 ? "negative gap" : "within ±1%"}</small>
       ) : null}
     </div>
   );
 }
 
 function CompanyIdentity({ stock }: { stock: ScreenerStock }) {
-  const style = { "--logo-hue": logoHue(stock.symbol) } as CSSProperties;
   return (
     <div className="company-identity">
-      <span className="company-mark" style={style} aria-hidden="true">
-        {stock.symbol.slice(0, 2)}
-      </span>
+      <CompanyLogo className="company-mark" symbol={stock.symbol} />
       <span className="company-copy">
         <strong>{stock.company}</strong>
         <small>
@@ -595,27 +555,43 @@ export function ScreenerClient() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [rows, setRows] = useState<ScreenerStock[]>([]);
-  const [total, setTotal] = useState(0);
+  const [allRows, setAllRows] = useState<ScreenerStock[]>([]);
+  const [snapshotSchemaVersion, setSnapshotSchemaVersion] = useState<number | null>(null);
   const [totalKnown, setTotalKnown] = useState(false);
-  const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [responseStatus, setResponseStatus] = useState("loading");
   const [scan, setScan] = useState<ScanState | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [columnsModalOpen, setColumnsModalOpen] = useState(false);
-  const [view, setView] = useState<"results" | "entrants">("results");
   const [savedScreens, setSavedScreens] = useState<SavedScreen[]>([]);
   const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
   const [storageReady, setStorageReady] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("Value opportunities");
+  const allRowsRef = useRef<ScreenerStock[]>([]);
+  const hasSnapshotRef = useRef(false);
+  const requestIdRef = useRef(0);
 
-  const serializedFilters = useMemo(() => JSON.stringify(filterPayload(filters)), [filters]);
-  const serializedColumns = useMemo(() => columns.join(","), [columns]);
+  const view = useMemo(
+    () =>
+      deriveScreenerView({
+        rows: allRows,
+        filters,
+        sortKey,
+        sortOrder,
+        page,
+        pageSize,
+      }),
+    [allRows, filters, page, pageSize, sortKey, sortOrder],
+  );
+  const rows = view.rows;
+  const total = view.total;
+  const totalPages = view.totalPages;
+  const currentPage = view.page;
 
   useEffect(() => {
     let cancelled = false;
@@ -652,11 +628,12 @@ export function ScreenerClient() {
                 },
                 body: JSON.stringify({
                   name: local.name,
-                  filters: local.filters,
+                  filters: withRequiredUniverseFilters(local.filters).map(
+                    filterForStorage,
+                  ),
                   columns: local.columns,
                   sortKey: local.sortKey,
                   sortOrder: local.sortOrder,
-                  symbols: local.symbols,
                 }),
               }).then((response) =>
                 workspaceJson<{ screener: SavedScreenerApi }>(response),
@@ -696,25 +673,22 @@ export function ScreenerClient() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const params = new URLSearchParams({
-      page: String(page),
-      pageSize: String(pageSize),
-      sort: sortKey,
-      order: sortOrder,
-      filters: serializedFilters,
-      columns: serializedColumns,
-    });
+    const requestId = ++requestIdRef.current;
 
     async function load() {
-      if (rows.length) setIsRefreshing(true);
+      if (hasSnapshotRef.current) setIsRefreshing(true);
       else setIsLoading(true);
       setError(null);
-      setResponseStatus("loading");
+      setRefreshError(null);
+      if (!hasSnapshotRef.current) setResponseStatus("loading");
       try {
-        const response = await fetch(`/api/screener?${params.toString()}`, {
-          signal: controller.signal,
-          headers: { Accept: "application/json" },
-        });
+        const response = await fetch(
+          `/api/screener/snapshot?schema=${SCREENER_CLIENT_SNAPSHOT_SCHEMA_VERSION}`,
+          {
+            signal: controller.signal,
+            headers: { Accept: "application/json" },
+          },
+        );
         const payload = (await response.json().catch(() => ({}))) as unknown;
         if (!response.ok && response.status !== 202) {
           const normalizedError = normalizeScreenerPayload(payload, response.status);
@@ -722,16 +696,29 @@ export function ScreenerClient() {
         }
 
         const normalized = normalizeScreenerPayload(payload, response.status);
+        if (
+          response.status !== 202 &&
+          normalized.totalKnown &&
+          normalized.rows.length !== normalized.total
+        ) {
+          throw new Error("The complete company universe was not returned.");
+        }
+        if (controller.signal.aborted || requestId !== requestIdRef.current) {
+          return;
+        }
+        if (normalized.schemaVersion !== null) {
+          setSnapshotSchemaVersion(normalized.schemaVersion);
+          setFilters((current) =>
+            withSnapshotCompatibleFilters(current, normalized.schemaVersion),
+          );
+        }
         if (normalized.rows.length || response.status !== 202) {
-          setRows(normalized.rows);
-          setTotal(normalized.total);
+          allRowsRef.current = normalized.rows;
+          hasSnapshotRef.current = true;
+          setAllRows(normalized.rows);
           setTotalKnown(normalized.totalKnown);
-          setTotalPages(normalized.totalPages);
-        } else {
-          setRows([]);
-          setTotal(0);
+        } else if (!hasSnapshotRef.current) {
           setTotalKnown(false);
-          setTotalPages(1);
         }
         setResponseStatus(normalized.status);
         setScan(
@@ -741,16 +728,17 @@ export function ScreenerClient() {
               : null),
         );
       } catch {
-        if (controller.signal.aborted) return;
-        setRows([]);
-        setTotal(0);
-        setTotalKnown(false);
-        setTotalPages(1);
-        setResponseStatus("error");
-        setScan(null);
-        setError("We couldn’t load the results. Try again in a moment.");
+        if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+        if (hasSnapshotRef.current) {
+          setRefreshError("We couldn’t refresh the results. The previous data is still shown.");
+        } else {
+          setTotalKnown(false);
+          setResponseStatus("error");
+          setScan(null);
+          setError("We couldn’t load the results. Try again in a moment.");
+        }
       } finally {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && requestId === requestIdRef.current) {
           setIsLoading(false);
           setIsRefreshing(false);
         }
@@ -759,9 +747,7 @@ export function ScreenerClient() {
 
     void load();
     return () => controller.abort();
-    // rows is intentionally excluded so a completed request does not retrigger itself.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize, sortKey, sortOrder, serializedFilters, serializedColumns, refreshKey]);
+  }, [refreshKey]);
 
   useEffect(() => {
     if (scan?.state !== "warming" || error) return;
@@ -770,20 +756,14 @@ export function ScreenerClient() {
   }, [scan?.state, scan?.scanned, error, refreshKey]);
 
   const activeSaved = savedScreens.find((screen) => screen.id === activeSavedId) ?? null;
-  const entrants = useMemo(() => {
-    if (!activeSaved) return [];
-    const baseline = new Set(activeSaved.symbols.map((symbol) => symbol.toUpperCase()));
-    return rows.filter((stock) => !baseline.has(stock.symbol.toUpperCase()));
-  }, [activeSaved, rows]);
-  const displayedRows = view === "results" ? rows : entrants;
 
   const toggleFilter = useCallback((filter: ScreenerFilter) => {
+    if (isRequiredUniverseFilter(filter.id)) return;
     setFilters((current) =>
       current.some((item) => item.id === filter.id)
         ? current.filter((item) => item.id !== filter.id)
         : [
             ...current.filter((item) => {
-              if (filter.field === "changePercent") return item.field !== "changePercent";
               if (filter.field === "marketCap" && filter.operator === "gte") {
                 return !(item.field === "marketCap" && item.operator === "gte");
               }
@@ -817,11 +797,10 @@ export function ScreenerClient() {
         },
         body: JSON.stringify({
           name,
-          filters,
+          filters: filters.map(filterForStorage),
           columns,
           sortKey,
           sortOrder,
-          symbols: rows.map((row) => row.symbol),
         }),
       }).then((response) =>
         workspaceJson<{ screener: SavedScreenerApi }>(response),
@@ -845,12 +824,13 @@ export function ScreenerClient() {
     const screen = savedScreens.find((item) => item.id === id);
     if (!screen) return;
     setActiveSavedId(id);
-    setFilters(screen.filters);
+    setFilters(
+      withSnapshotCompatibleFilters(screen.filters, snapshotSchemaVersion),
+    );
     setColumns(screen.columns);
     setSortKey(screen.sortKey);
     setSortOrder(screen.sortOrder);
     setPage(1);
-    setView("results");
   };
 
   const deleteScreen = async (id: string) => {
@@ -865,7 +845,6 @@ export function ScreenerClient() {
       if (activeSavedId === id) {
         const next = savedScreens.find((screen) => screen.id !== id);
         setActiveSavedId(next?.id ?? null);
-        setView("results");
       }
       setWorkspaceError(null);
     } catch (reason) {
@@ -877,17 +856,25 @@ export function ScreenerClient() {
     }
   };
 
-  const firstResult = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const lastResult = Math.min(total, page * pageSize);
+  const firstResult = total === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const lastResult = Math.min(total, currentPage * pageSize);
   return (
     <main className="screener-page">
       <div className="screener-shell">
         <header className="screener-hero">
-          <div className="eyebrow">
-            <span className="eyebrow__mark" aria-hidden="true">
-              <Sparkles size={14} />
-            </span>
-            Value opportunity finder
+          <div className="screener-hero__art">
+            {/* This local asset is served directly so the Cloudflare build does not depend on an image optimizer. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/value-opportunities-buffett-hero.webp"
+              alt="Comic portrait of Warren Buffett holding a Coca-Cola bottle"
+              width={1942}
+              height={810}
+              loading="eager"
+              fetchPriority="high"
+              decoding="async"
+              draggable={false}
+            />
           </div>
           <div className="hero-heading-row">
             <div>
@@ -902,7 +889,6 @@ export function ScreenerClient() {
         <section className="criteria-panel" aria-labelledby="criteria-title">
           <div className="section-heading">
             <div>
-              <span className="section-kicker">Your value method</span>
               <h2 id="criteria-title">Define the opportunity</h2>
               <p className="criteria-intro">Choose the evidence a company must show before it earns deeper research.</p>
             </div>
@@ -912,12 +898,26 @@ export function ScreenerClient() {
           </div>
           <div className="filter-chips">
             {filters.map((filter) => (
-              <span className="active-filter" key={filter.id}>
+              <span
+                className="active-filter"
+                key={filter.id}
+                aria-label={`${filter.label}. ${filter.shortLabel}${isRequiredUniverseFilter(filter.id) ? ". Always applied" : ""}`}
+              >
                 <span className="active-filter__category">{filter.category}</span>
-                <strong>{filter.shortLabel}</strong>
-                <button type="button" onClick={() => toggleFilter(filter)} aria-label={`Remove ${filter.shortLabel} filter`}>
-                  <X size={14} />
-                </button>
+                <strong>{filter.label}</strong>
+                {isRequiredUniverseFilter(filter.id) ? (
+                  <span className="active-filter__locked">
+                    <Check size={12} aria-hidden="true" /> Always on
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleFilter(filter)}
+                    aria-label={`Remove ${filter.label}: ${filter.shortLabel}`}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </span>
             ))}
             {filters.length === 0 ? (
@@ -935,7 +935,7 @@ export function ScreenerClient() {
                 </span>
                 <span>
                   <strong>Browse filters</strong>
-                  <small>Valuation, quality, growth, momentum, and universe</small>
+                  <small>Valuation, quality, growth, and universe</small>
                 </span>
               </span>
               <ChevronDown
@@ -944,31 +944,19 @@ export function ScreenerClient() {
                 aria-hidden="true"
               />
             </summary>
-            <InlineFilterLibrary selected={filters} onToggle={toggleFilter} />
+            <InlineFilterLibrary
+              selected={filters}
+              snapshotSchemaVersion={snapshotSchemaVersion}
+              onToggle={toggleFilter}
+            />
           </details>
         </section>
 
         <section className="results-panel" aria-labelledby="results-title">
           <div className="results-topbar">
-            <div className="result-tabs" role="tablist" aria-label="Result views">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={view === "results"}
-                className={view === "results" ? "is-active" : ""}
-                onClick={() => setView("results")}
-              >
-                Results <span>{totalKnown ? total.toLocaleString("en-US") : "…"}</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={view === "entrants"}
-                className={view === "entrants" ? "is-active" : ""}
-                onClick={() => setView("entrants")}
-              >
-                New on page <span>{entrants.length}</span>
-              </button>
+            <div className="results-heading">
+              <h2 id="results-title">Results</h2>
+              <span>{totalKnown ? total.toLocaleString("en-US") : "…"}</span>
             </div>
             <div className="results-actions">
               {savedScreens.length ? (
@@ -1011,7 +999,7 @@ export function ScreenerClient() {
                 type="button"
                 onClick={() => setRefreshKey((value) => value + 1)}
                 aria-label="Refresh results"
-                disabled={isRefreshing}
+                disabled={isLoading || isRefreshing}
               >
                 <RefreshCw className={isRefreshing ? "spin" : ""} size={17} />
               </button>
@@ -1024,7 +1012,7 @@ export function ScreenerClient() {
                 <Bookmark size={17} aria-hidden="true" />
                 <div>
                   <strong>Save this screen</strong>
-                  <span>The companies on this result page become its comparison baseline.</span>
+                  <span>Keep these filters, columns, and sorting for later.</span>
                 </div>
               </div>
               <label>
@@ -1041,7 +1029,7 @@ export function ScreenerClient() {
                 type="submit"
                 disabled={!saveName.trim() || !storageReady}
               >
-                Save snapshot
+                Save screen
               </button>
               <button className="icon-button" type="button" onClick={() => setSaveOpen(false)} aria-label="Cancel saving">
                 <X size={16} />
@@ -1049,12 +1037,12 @@ export function ScreenerClient() {
             </form>
           ) : null}
 
-          {error ? (
+          {error || refreshError ? (
             <div className="data-notice data-notice--error" role="alert">
               <CloudOff size={19} aria-hidden="true" />
               <div>
-                <strong>Results couldn’t be loaded</strong>
-                <p>{error}</p>
+                <strong>{error ? "Results couldn’t be loaded" : "Results couldn’t be refreshed"}</strong>
+                <p>{error ?? refreshError}</p>
               </div>
               <button type="button" onClick={() => setRefreshKey((value) => value + 1)}>
                 Try again
@@ -1082,70 +1070,55 @@ export function ScreenerClient() {
           {scan && (scan.state === "warming" || scan.state === "error") ? <ScanBanner scan={scan} /> : null}
 
           {!error ? (
-            <div className="result-context">
-              <div>
-                {view === "results" ? (
-                  <>
-                    <strong>
-                      {total.toLocaleString("en-US")} {totalKnown ? "companies" : "discovered so far"}
-                    </strong>
-                    <span>
-                      {total > 0
-                        ? `Showing ${firstResult.toLocaleString("en-US")}–${lastResult.toLocaleString("en-US")}`
-                        : scan?.state === "warming"
-                          ? "Scanning the universe"
-                          : "No matches"}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <strong>{entrants.length} new on this page</strong>
-                    <span>{activeSaved ? `Compared with “${activeSaved.name}”` : "Save a screen to create a baseline"}</span>
-                  </>
-                )}
+            <>
+              <div className="result-context">
+                <div>
+                  <strong>
+                    {total.toLocaleString("en-US")} {totalKnown ? "companies" : "discovered so far"}
+                  </strong>
+                  <span>
+                    {total > 0
+                      ? `Showing ${firstResult.toLocaleString("en-US")}–${lastResult.toLocaleString("en-US")}`
+                      : scan?.state === "warming"
+                        ? "Scanning the universe"
+                        : "No matches"}
+                  </span>
+                </div>
+                <div className="sort-summary">
+                  <SlidersHorizontal size={14} aria-hidden="true" />
+                  {COLUMN_LABELS[sortKey as ColumnKey] ?? "Company"} · {sortOrder === "desc" ? "high to low" : "low to high"}
+                </div>
               </div>
-              <div className="sort-summary">
-                <SlidersHorizontal size={14} aria-hidden="true" />
-                {COLUMN_LABELS[sortKey as ColumnKey] ?? "Company"} · {sortOrder === "desc" ? "high to low" : "low to high"}
-              </div>
-            </div>
+            </>
           ) : null}
 
-          {error ? null : (isLoading || scan?.state === "warming") && rows.length === 0 ? (
+          {error ? null : (isLoading || scan?.state === "warming") && allRows.length === 0 ? (
             <LoadingRows columns={columns} />
-          ) : displayedRows.length ? (
+          ) : rows.length ? (
             <>
               <ResultsTable
-                rows={displayedRows}
+                rows={rows}
                 columns={columns}
                 sortKey={sortKey}
                 sortOrder={sortOrder}
                 onSort={handleSort}
               />
-              <MobileResults rows={displayedRows} columns={columns} />
+              <MobileResults rows={rows} columns={columns} />
             </>
           ) : (
             <div className="empty-results">
               <div aria-hidden="true">
-                {view === "entrants" ? <Bookmark size={23} /> : <Search size={23} />}
+                <Search size={23} />
               </div>
-              <h3>{view === "entrants" ? "Nothing new on this page yet" : "No companies match this screen"}</h3>
-              <p>
-                {view === "entrants"
-                  ? activeSaved
-                    ? "The companies on this page are already in your saved baseline. Refresh later to compare again."
-                    : "Save the current results, then this view will highlight companies that appear later."
-                  : "Remove one or two filters to widen the opportunity set."}
-              </p>
-              {view === "results" ? (
-                <button className="secondary-button" type="button" onClick={() => setFilters(DEFAULT_FILTERS)}>
-                  Reset to fair value
-                </button>
-              ) : null}
+              <h3>No companies match this screen</h3>
+              <p>Remove one or two filters to widen the opportunity set.</p>
+              <button className="secondary-button" type="button" onClick={() => setFilters(DEFAULT_FILTERS)}>
+                Reset to provider value
+              </button>
             </div>
           )}
 
-          {view === "results" && total > 0 && totalKnown ? (
+          {total > 0 && totalKnown ? (
             <div className="pagination" aria-label="Results pagination">
               <label>
                 Rows
@@ -1162,16 +1135,16 @@ export function ScreenerClient() {
                 </select>
               </label>
               <span>
-                Page {page.toLocaleString("en-US")} of {totalPages.toLocaleString("en-US")}
+                Page {currentPage.toLocaleString("en-US")} of {totalPages.toLocaleString("en-US")}
               </span>
               <div>
-                <button type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} aria-label="Previous page">
+                <button type="button" disabled={currentPage <= 1} onClick={() => setPage(Math.max(1, currentPage - 1))} aria-label="Previous page">
                   <ArrowLeft size={16} />
                 </button>
                 <button
                   type="button"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
                   aria-label="Next page"
                 >
                   <ArrowRight size={16} />
@@ -1183,7 +1156,6 @@ export function ScreenerClient() {
 
         <section className="screener-faq" aria-labelledby="faq-title">
           <div className="faq-heading">
-            <span className="section-kicker">Value-investing method</span>
             <h2 id="faq-title">From low price to real opportunity</h2>
             <p>Price starts the search. Owner earnings, resilience, and downside protection decide what deserves research.</p>
           </div>
@@ -1229,8 +1201,7 @@ export function ScreenerClient() {
               </summary>
               <p>
                 Save a repeatable set of value criteria instead of rebuilding the search around each market move. The
-                page comparison highlights companies that were not in the saved result page, helping you investigate what
-                changed without overstating it as a full-universe alert.
+                saved definition keeps the same filters, columns, and sorting ready for the next review.
               </p>
             </details>
           </div>

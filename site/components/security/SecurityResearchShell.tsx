@@ -8,6 +8,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
+import { CompanyLogo } from "@/components/CompanyLogo";
 import { usePathname } from "next/navigation";
 import {
   createContext,
@@ -15,14 +16,8 @@ import {
   useContext,
   useEffect,
   useState,
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
 } from "react";
-import {
-  DEFAULT_DCF_ASSUMPTIONS,
-  type DcfAssumptions,
-} from "@/lib/security/valuation";
 import { normalizeSummary } from "./data";
 import {
   researchViewFromPathname,
@@ -37,22 +32,6 @@ type ResearchShellContextValue = {
   error: string | null;
   notFound: boolean;
   refreshSummary: (background?: boolean) => Promise<void>;
-  dcfAssumptions: DcfAssumptions;
-  setDcfAssumptions: Dispatch<SetStateAction<DcfAssumptions>>;
-  note: string;
-  setNote: Dispatch<SetStateAction<string>>;
-  noteSaved: boolean;
-  setNoteSaved: Dispatch<SetStateAction<boolean>>;
-  sentiment: "bear" | "neutral" | "bull";
-  setSentiment: Dispatch<SetStateAction<"bear" | "neutral" | "bull">>;
-  watchSaved: number | null;
-  setWatchSaved: Dispatch<SetStateAction<number | null>>;
-  watchInput: string;
-  setWatchInput: Dispatch<SetStateAction<string>>;
-  workspaceError: string | null;
-  setWorkspaceError: Dispatch<SetStateAction<string | null>>;
-  journalLoaded: boolean;
-  setJournalLoaded: Dispatch<SetStateAction<boolean>>;
 };
 
 const ResearchShellContext =
@@ -84,14 +63,14 @@ const percent = (value: number | null) =>
     : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 
 const freshness = (asOf: string | null) => {
-  if (!asOf) return "Latest available";
+  if (!asOf) return "Page calculation time unavailable";
   const timestamp = Date.parse(asOf);
-  if (!Number.isFinite(timestamp)) return "Latest available";
+  if (!Number.isFinite(timestamp)) return "Page calculation time unavailable";
   const minutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000));
-  if (minutes < 1) return "Updated just now";
-  if (minutes < 60) return `Updated ${minutes}m ago`;
-  if (minutes < 24 * 60) return `Updated ${Math.floor(minutes / 60)}h ago`;
-  return `As of ${new Date(timestamp).toLocaleDateString("en-US", {
+  if (minutes < 1) return "Page calculated just now";
+  if (minutes < 60) return `Page calculated ${minutes}m ago`;
+  if (minutes < 24 * 60) return `Page calculated ${Math.floor(minutes / 60)}h ago`;
+  return `Page calculated ${new Date(timestamp).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   })}`;
@@ -115,18 +94,6 @@ export default function SecurityResearchShell({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
-  const [dcfAssumptions, setDcfAssumptions] = useState<DcfAssumptions>({
-    ...DEFAULT_DCF_ASSUMPTIONS,
-  });
-  const [note, setNote] = useState("");
-  const [noteSaved, setNoteSaved] = useState(false);
-  const [sentiment, setSentiment] = useState<
-    "bear" | "neutral" | "bull"
-  >("neutral");
-  const [watchSaved, setWatchSaved] = useState<number | null>(null);
-  const [watchInput, setWatchInput] = useState("");
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [journalLoaded, setJournalLoaded] = useState(false);
   const summaryPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/summary`;
 
   const refreshSummary = useCallback(
@@ -155,9 +122,6 @@ export default function SecurityResearchShell({
         setNotFound(false);
         setError(null);
       } catch (reason) {
-        setSummary(
-          (current) => current ?? normalizeSummary({}, exchange, symbol),
-        );
         setError(
           reason instanceof Error
             ? reason.message
@@ -186,6 +150,7 @@ export default function SecurityResearchShell({
   const quote = summary?.quote;
   const currency = summary?.identity.currency ?? "USD";
   const isPositive = (quote?.changePercent.value ?? 0) >= 0;
+  const displayCompanyName = summary?.identity.company.value ?? companyName;
 
   return (
     <ResearchShellContext.Provider
@@ -196,22 +161,6 @@ export default function SecurityResearchShell({
         error,
         notFound,
         refreshSummary,
-        dcfAssumptions,
-        setDcfAssumptions,
-        note,
-        setNote,
-        noteSaved,
-        setNoteSaved,
-        sentiment,
-        setSentiment,
-        watchSaved,
-        setWatchSaved,
-        watchInput,
-        setWatchInput,
-        workspaceError,
-        setWorkspaceError,
-        journalLoaded,
-        setJournalLoaded,
       }}
     >
       <div className="security-research-page">
@@ -223,17 +172,20 @@ export default function SecurityResearchShell({
 
           <header className="security-research-header">
             <div className="security-research-identity">
-              <div className="security-research-monogram" aria-hidden="true">
-                {symbol.slice(0, 2)}
-              </div>
+              <CompanyLogo
+                className="security-research-monogram"
+                symbol={symbol}
+                loading="eager"
+              />
               <div>
                 <p className="security-research-ticker">
                   {exchange}:{symbol}
                 </p>
-                <h1>{companyName} opportunity overview</h1>
+                <h1>{displayCompanyName} opportunity overview</h1>
                 <p>
-                  Does today&apos;s price offer enough margin of safety for
-                  this business&apos;s quality and risks?
+                  {summary?.applicability.companyAnalysis === false
+                    ? "Quote data is available, but company valuation and business-quality models do not apply to this security type."
+                    : "Does today's price offer enough margin of safety for this business's quality and risks?"}
                 </p>
               </div>
             </div>

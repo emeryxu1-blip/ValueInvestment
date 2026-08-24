@@ -1,13 +1,5 @@
 import { z } from "zod";
 
-const symbolSchema = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .min(1)
-  .max(24)
-  .regex(/^[A-Z0-9.-]+$/, "Symbol contains unsupported characters.");
-
 const filterValueSchema = z.union([
   z.string().max(200),
   z.number().finite(),
@@ -66,14 +58,6 @@ const savedSortSchema = z.enum([
   "revenueGrowth",
 ]);
 
-export const journalWriteSchema = z
-  .object({
-    note: z.string().max(20_000).default(""),
-    sentiment: z.enum(["bear", "neutral", "bull"]).default("neutral"),
-    watchPrice: z.number().finite().positive().max(1_000_000_000_000).nullable().default(null),
-  })
-  .strict();
-
 export const savedScreenerWriteSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -87,10 +71,6 @@ export const savedScreenerWriteSchema = z
       }),
     sortKey: savedSortSchema,
     sortOrder: z.enum(["asc", "desc"]),
-    symbols: z
-      .array(symbolSchema)
-      .max(1_000)
-      .transform((symbols) => [...new Set(symbols)]),
   })
   .strict();
 
@@ -98,5 +78,4 @@ export const savedScreenerIdSchema = z
   .string()
   .uuid("Saved screener id must be a UUID.");
 
-export type JournalWrite = z.infer<typeof journalWriteSchema>;
 export type SavedScreenerWrite = z.infer<typeof savedScreenerWriteSchema>;

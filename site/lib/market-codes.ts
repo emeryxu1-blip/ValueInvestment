@@ -13,6 +13,20 @@ export type ResolvedSecurity = {
   catalogAsOf: string;
 };
 
+const COMPANY_ANALYSIS_SECURITY_TYPES = new Set(["ES", "ED"]);
+
+export function supportsCompanyAnalysis(
+  security: Pick<ResolvedSecurity, "securityType">,
+): boolean {
+  return COMPANY_ANALYSIS_SECURITY_TYPES.has(security.securityType);
+}
+
+export function unsupportedCompanyAnalysisReason(
+  security: Pick<ResolvedSecurity, "securityType">,
+): string {
+  return `Company valuation and business-quality analysis are unavailable for security type ${security.securityType}. These views currently support operating common and depositary equities.`;
+}
+
 const EXCHANGE_ALIASES: Record<string, string> = {
   amex: "amex",
   arca: "arca",

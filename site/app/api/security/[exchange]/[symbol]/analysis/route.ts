@@ -1,5 +1,9 @@
 import { jsonResponse, routeError } from "../../../../../../lib/http";
-import { resolveMarketCode } from "../../../../../../lib/market-codes";
+import {
+  resolveMarketCode,
+  supportsCompanyAnalysis,
+  unsupportedCompanyAnalysisReason,
+} from "../../../../../../lib/market-codes";
 import { getSecurityAnalysis } from "../../../../../../lib/security/analysis";
 import {
   analysisQuerySchema,
@@ -27,6 +31,17 @@ export async function GET(
             "This exchange and symbol are not in the supported security catalog.",
         },
         { status: 404 },
+      );
+    }
+    if (!supportsCompanyAnalysis(resolved)) {
+      return jsonResponse(
+        {
+          code: "UNSUPPORTED_SECURITY_TYPE",
+          error: unsupportedCompanyAnalysisReason(resolved),
+          retryable: false,
+          securityType: resolved.securityType,
+        },
+        { status: 422 },
       );
     }
     return jsonResponse(await getSecurityAnalysis(resolved, query.view), {

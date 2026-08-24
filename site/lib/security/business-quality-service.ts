@@ -7,17 +7,30 @@ import {
   medianFinite,
 } from "./business-quality";
 import { getSecurityAnalysis } from "./analysis";
-import { getPeersResponse } from "./peers";
+import { getPeersResponse, unavailablePeersResponse } from "./peers";
 import { normalizeProfitabilitySnapshot } from "./profitability";
 import { getSecuritySummary } from "./service";
+import { MINIMUM_PEER_SAMPLE } from "./peer-selection.ts";
+import { CompanyAnalysisUnsupportedError } from "./company-analysis-applicability.ts";
 
 export async function getBusinessQualityResponse(
   resolved: ResolvedSecurity,
 ): Promise<BusinessQualityResponse> {
-  const [summary, profitabilityPayload, peers] = await Promise.all([
-    getSecuritySummary(resolved),
+  const summary = await getSecuritySummary(resolved);
+  if (!summary.applicability.companyAnalysis) {
+    throw new CompanyAnalysisUnsupportedError(
+      summary.applicability.reason ?? "Company analysis is unavailable.",
+      summary.applicability.securityType,
+    );
+  }
+  const [profitabilityPayload, peers] = await Promise.all([
     getSecurityAnalysis(resolved, "profitability"),
-    getPeersResponse(resolved),
+    getPeersResponse(resolved, undefined, "quality").catch(() =>
+      unavailablePeersResponse(
+        resolved,
+        "Direct peer profitability data is temporarily unavailable.",
+      ),
+    ),
   ]);
   const profitability = normalizeProfitabilitySnapshot(
     profitabilityPayload,
@@ -28,9 +41,11 @@ export async function getBusinessQualityResponse(
   const peerEconomics = calculatePeerEconomics(peers.peers);
   const peerMedianNetMargin = medianFinite(
     peerEconomics.map((peer) => peer.netMargin),
+    MINIMUM_PEER_SAMPLE,
   );
   const peerMedianReturnOnEquity = medianFinite(
     peerEconomics.map((peer) => peer.returnOnEquity),
+    MINIMUM_PEER_SAMPLE,
   );
   const netMarginGap =
     analysis.netMargin !== null && peerMedianNetMargin !== null
@@ -48,12 +63,13 @@ export async function getBusinessQualityResponse(
     },
     peerComparison: {
       netMarginGap,
+      selectionReason: peers.selectionReason ?? null,
       narrative:
         netMarginGap === null
-          ? "More comparable inputs are needed to place the company against its peers."
+          ? "Direct peer profitability data is unavailable for a reliable comparison."
           : netMarginGap >= 0
-            ? `${resolved.symbol}'s displayed net margin is above the multiple-implied peer median.`
-            : `${resolved.symbol}'s displayed net margin is below the multiple-implied peer median.`,
+            ? `${resolved.symbol}'s displayed net margin is above the direct peer median.`
+            : `${resolved.symbol}'s displayed net margin is below the direct peer median.`,
     },
     asOf: [summary.asOf, profitability.asOf, peers.asOf]
       .filter((value): value is string => Boolean(value))

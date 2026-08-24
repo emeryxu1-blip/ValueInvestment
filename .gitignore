@@ -6,4 +6,7 @@ site/.open-next/
 site/.vinext/
 site/dist/
 site/.wrangler/
+/.wrangler/
 site/.env*
+site/.dev.vars*
+!site/.dev.vars.example

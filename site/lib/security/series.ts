@@ -23,8 +23,6 @@ const LABELS: Record<string, { label: string; unit: string }> = {
   eps: { label: "Earnings per share", unit: "USD" },
   revenue: { label: "Revenue", unit: "USD" },
   netIncome: { label: "Net income", unit: "USD" },
-  freeCashFlow: { label: "Free cash flow", unit: "USD" },
-  target: { label: "Analyst target", unit: "USD" },
 };
 
 function emptySeries(
@@ -85,10 +83,12 @@ async function getValuationSeries(
       },
       {
         id: "dcf",
-        label: "Cash-flow value",
+        label: "Provider DCF value",
         unit: "USD",
         points: [...dcf.predicted]
-          .sort((left, right) => left[0].localeCompare(right[0]))
+          .sort((left, right) =>
+            yyyymmddToIso(left[0]).localeCompare(yyyymmddToIso(right[0])),
+          )
           .map(([time, value]) => ({ time: yyyymmddToIso(time), value })),
       },
     ],

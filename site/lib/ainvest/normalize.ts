@@ -216,6 +216,32 @@ export function displayNumberValue(
   return raw * 100;
 }
 
+/**
+ * Normalize a provider ratio to its fractional form for calculations.
+ *
+ * AInvest can encode ratios as an already fractional value, a percentage, or
+ * a scaled `ratio2` value. Keeping this conversion beside the snapshot
+ * metadata parser prevents company and peer ratios from silently using
+ * different scales.
+ */
+export function ratioNumberValue(
+  row: NormalizedSnapshotRow | undefined,
+  requestId: string,
+): number | null {
+  const raw = numberValue(row, requestId);
+  const metadata = row?.values[requestId];
+  if (raw == null) return null;
+
+  if (metadata?.valueType === "ratio2") {
+    if (metadata.rawUnit === "x100") return raw / 100;
+    if (metadata.rawUnit === "x1000") return raw / 1000;
+    return raw;
+  }
+  if (metadata?.valueType === "ratio") return raw;
+  if (metadata?.unit === "%") return raw / 100;
+  return Math.abs(raw) > 2 ? raw / 100 : raw;
+}
+
 export function stringValue(
   row: NormalizedSnapshotRow | undefined,
   requestId: string,

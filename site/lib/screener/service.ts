@@ -6,7 +6,7 @@ import type {
   ScreenerSort,
   SortOrder,
 } from "../contracts";
-import { fetchAInvest, hasAInvestAuth } from "../ainvest/client";
+import { fetchAInvest } from "../ainvest/client";
 import {
   normalizeSnapshot,
   displayNumberValue,
@@ -16,8 +16,8 @@ import {
   type NormalizedSnapshotRow,
 } from "../ainvest/normalize";
 import {
-  buildScreenerQuoteRequest,
-  buildScreenerSnapshotRequest,
+  buildScreenerUniverseSnapshotRequest,
+  SCREENER_INDICATORS,
 } from "../ainvest/requests";
 import { metric } from "../metric";
 import {
@@ -26,17 +26,55 @@ import {
   symbolFromMarketCode,
 } from "../market-codes";
 import { deriveMispricing, parseDcfModule } from "../security/derivations";
+import { positiveNumber } from "../security/valuation.ts";
+import {
+  assertExactUniverseMarketCodes,
+  ensureTopMarketCapUniverse,
+  readTopMarketCapUniverseVersion,
+} from "./universe";
+import { screenerFilterMask } from "./filter-presets";
+import { summarizeOperatingMarginHistory } from "./operating-margins";
+import {
+  readScreenerSnapshot,
+  replaceScreenerSnapshot,
+  type DurableScreenerSnapshot,
+} from "./snapshot";
 
-const CACHE_TTL_MS = 30 * 60 * 1000;
+const MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
+const REQUIRED_EXCHANGES = new Set(["nasdaq", "nyse"]);
+const REQUIRED_FILTER_METRIC_COVERAGE = {
+  evToEbitda: 0.7,
+  returnOnInvestedCapital: 0.8,
+  netDebt: 0.9,
+} as const;
+
+type ScreenerSnapshotRefreshOptions = {
+  refreshedAt?: number;
+  generationId?: string;
+  dailyRunCompletion?: {
+    tradingDate: string;
+    leaseToken: string;
+  };
+};
+
+export class ScreenerSnapshotUnavailableError extends Error {
+  constructor() {
+    super("No stored screener snapshot has been published yet.");
+    this.name = "ScreenerSnapshotUnavailableError";
+  }
+}
 
 type CacheRecord = {
+  generationId: string;
   rows: ScreenerRow[];
   expiresAt: number;
+  universeRefreshedAt: number;
+  refreshedAt: number;
 };
 
 let valuationCache: CacheRecord | null = null;
 let scanProgress: ScanProgress = { state: "idle", scanned: 0, total: null };
-let scanPromise: Promise<void> | null = null;
+let scanPromise: Promise<CacheRecord> | null = null;
 
 export type ScreenerQuery = {
   page: number;
@@ -70,8 +108,12 @@ export function screenerRowFromSnapshot(
   const companySource = stringValue(row, "company") ? "live" : "derived";
   const price = numberValue(row, "price");
   const dcf = parseDcfModule(objectValue(row, "fairValueModule"));
+  const fairValue = positiveNumber(dcf.fairValue);
+  const operatingMargins = summarizeOperatingMarginHistory(
+    objectValue(row, "operatingMarginHistory"),
+  );
   const fairAsOf = row.values.fairValueModule?.asOf ?? fetchedAt;
-  return {
+  const result: Omit<ScreenerRow, "filterMask"> = {
     marketCode: row.symbolCode,
     exchange: catalog?.exchange ?? routeExchangeForMarketCode(row.symbolCode),
     symbol: catalog?.symbol ?? symbolFromMarketCode(row.symbolCode),
@@ -82,14 +124,14 @@ export function screenerRowFromSnapshot(
     price: liveMetricNumber(row, "price", fetchedAt, "USD"),
     changePercent: liveMetricNumber(row, "changePercent", fetchedAt, "%"),
     marketCap: liveMetricNumber(row, "marketCap", fetchedAt, "USD"),
-    fairValue: metric(dcf.fairValue, "live", {
+    fairValue: metric(fairValue, "live", {
       asOf: fairAsOf,
       unit: "USD",
-      ...(dcf.fairValue == null
+      ...(fairValue == null
         ? { reason: "Market data returned no supported cash-flow value." }
         : {}),
     }),
-    mispricing: metric(deriveMispricing(dcf.fairValue, price), "derived", {
+    mispricing: metric(deriveMispricing(fairValue, price), "derived", {
       asOf: fairAsOf,
       unit: "ratio",
       reason: "Calculated as fair value divided by price, minus one.",
@@ -99,6 +141,36 @@ export function screenerRowFromSnapshot(
     netIncome: liveMetricNumber(row, "netIncome", fetchedAt, "USD"),
     freeCashFlow: liveMetricNumber(row, "freeCashFlow", fetchedAt, "USD"),
     debtToEquity: liveMetricNumber(row, "debtToEquity", fetchedAt, "%"),
+    evToEbitda: liveMetricNumber(row, "evToEbitda", fetchedAt, "x"),
+    returnOnInvestedCapital: liveMetricNumber(
+      row,
+      "returnOnInvestedCapital",
+      fetchedAt,
+      "%",
+    ),
+    netDebt: liveMetricNumber(row, "netDebt", fetchedAt, "USD"),
+    operatingMarginStable5Y: metric(operatingMargins.stable5Y, "derived", {
+      asOf: operatingMargins.asOf,
+      reason:
+        operatingMargins.stable5Y == null
+          ? "Five consecutive annual operating-margin observations were not returned."
+          : "True when the five-year operating-margin range is no more than five percentage points.",
+    }),
+    operatingMarginTrend5Y: metric(operatingMargins.trend5Y, "derived", {
+      asOf: operatingMargins.asOf,
+      unit: "ratio per year",
+      reason:
+        operatingMargins.trend5Y == null
+          ? "Five consecutive annual operating-margin observations were not returned."
+          : "Least-squares annual trend across the latest five fiscal-year operating margins.",
+    }),
+    operatingMarginsExpanding5Y: metric(operatingMargins.expanding5Y, "derived", {
+      asOf: operatingMargins.asOf,
+      reason:
+        operatingMargins.expanding5Y == null
+          ? "Five consecutive annual operating-margin observations were not returned."
+          : "True when the five-year least-squares slope is positive and the latest margin exceeds the earliest.",
+    }),
     sector: metric(stringValue(row, "sector"), "live", {
       asOf: row.values.sector?.asOf ?? fetchedAt,
       ...(stringValue(row, "sector") == null
@@ -107,82 +179,85 @@ export function screenerRowFromSnapshot(
     }),
     currency: "USD",
   };
-}
-
-async function fetchUniversePage(
-  begin: number,
-  count: number,
-  sort: ScreenerSort = "marketCap",
-  order: SortOrder = "desc",
-): Promise<{
-  rows: ScreenerRow[];
-  total: number;
-}> {
-  const payload = await fetchAInvest(
-    "snapshot",
-    buildScreenerSnapshotRequest({
-      begin,
-      count: Math.min(1000, count),
-      sort,
-      order,
-      fullSymbols: begin === 0,
-    }),
-  );
-  const fetchedAt = new Date().toISOString();
-  const normalized = normalizeSnapshot(payload);
   return {
-    rows: normalized.rows.map((row) => screenerRowFromSnapshot(row, fetchedAt)),
-    total: normalized.total,
+    ...result,
+    filterMask: screenerFilterMask(result),
   };
 }
 
-async function refreshCachedPageQuotes(
-  rows: ScreenerRow[],
-): Promise<ScreenerRow[]> {
-  if (rows.length === 0) return [];
-  const payload = await fetchAInvest(
-    "snapshot",
-    buildScreenerQuoteRequest(rows.map((row) => row.marketCode)),
-  );
-  const fetchedAt = new Date().toISOString();
-  const quoteRows = new Map(
-    normalizeSnapshot(payload).rows.map((row) => [row.symbolCode, row]),
-  );
-  return rows.map((cached) => {
-    const fresh = quoteRows.get(cached.marketCode);
-    const missing = (unit: string) =>
-      metric<number>(null, "live", {
-        asOf: fetchedAt,
-        unit,
-        reason: "A current market quote was not returned for this security.",
-      });
-    const price = fresh
-      ? liveMetricNumber(fresh, "price", fetchedAt, "USD")
-      : missing("USD");
-    return {
-      ...cached,
-      price,
-      changePercent: fresh
-        ? liveMetricNumber(fresh, "changePercent", fetchedAt, "%")
-        : missing("%"),
-      marketCap: fresh
-        ? liveMetricNumber(fresh, "marketCap", fetchedAt, "USD")
-        : missing("USD"),
-      mispricing: metric(
-        deriveMispricing(cached.fairValue.value, price.value),
-        "derived",
-        {
-          asOf: price.asOf ?? fetchedAt,
-          unit: "ratio",
-          reason: "Calculated from the cached fair value and current market price.",
-        },
+async function fetchStoredUniverse(marketCodes: string[]): Promise<ScreenerRow[]> {
+  const rows: ScreenerRow[] = [];
+  for (let start = 0; start < marketCodes.length; start += 400) {
+    const batches = [start, start + 200]
+      .filter((offset) => offset < marketCodes.length)
+      .map((offset) => marketCodes.slice(offset, offset + 200));
+    const payloads = await Promise.all(
+      batches.map((batch) =>
+        fetchAInvest(
+          "snapshot",
+          buildScreenerUniverseSnapshotRequest(batch),
+        ),
       ),
-    };
-  });
+    );
+    for (const [index, payload] of payloads.entries()) {
+      const fetchedAt = new Date().toISOString();
+      rows.push(...screenerRowsForUniversePayload(payload, batches[index], fetchedAt));
+    }
+  }
+  assertExactUniverseMarketCodes(
+    marketCodes,
+    rows.map((row) => row.marketCode),
+  );
+  return rows;
 }
 
-function cacheIsFresh(): boolean {
-  return Boolean(valuationCache && valuationCache.expiresAt > Date.now());
+function screenerRowsForUniversePayload(
+  payload: unknown,
+  requestedMarketCodes: string[],
+  fetchedAt: string,
+): ScreenerRow[] {
+  const snapshot = normalizeSnapshot(payload);
+  const normalized = snapshot.rows;
+  const returnedIndicatorIds = new Set(
+    snapshot.indicators.map(
+      (indicator) => indicator.req_unique_id ?? indicator.id,
+    ),
+  );
+  const missingIndicators = SCREENER_INDICATORS.filter(
+    (indicator) => !returnedIndicatorIds.has(indicator.req_unique_id),
+  );
+  if (missingIndicators.length > 0) {
+    throw new Error("The screener snapshot omitted required indicators.");
+  }
+  assertExactUniverseMarketCodes(
+    requestedMarketCodes,
+    normalized.map((row) => row.symbolCode),
+  );
+  return normalized.map((row) => screenerRowFromSnapshot(row, fetchedAt));
+}
+
+function assertFilterMetricCoverage(rows: ScreenerRow[]): void {
+  for (const [metricName, minimumCoverage] of Object.entries(
+    REQUIRED_FILTER_METRIC_COVERAGE,
+  ) as Array<
+    [keyof typeof REQUIRED_FILTER_METRIC_COVERAGE, number]
+  >) {
+    const populated = rows.filter(
+      (row) => row[metricName].value != null,
+    ).length;
+    if (populated / rows.length < minimumCoverage) {
+      throw new Error("The screener snapshot omitted required filter coverage.");
+    }
+  }
+}
+
+function cacheIsFresh(universeRefreshedAt?: number): boolean {
+  return Boolean(
+    valuationCache &&
+      valuationCache.expiresAt > Date.now() &&
+      (universeRefreshedAt == null ||
+        valuationCache.universeRefreshedAt === universeRefreshedAt),
+  );
 }
 
 export function getScreenerScanProgress(): ScanProgress {
@@ -192,91 +267,126 @@ export function getScreenerScanProgress(): ScanProgress {
       scanned: valuationCache?.rows.length ?? 0,
       total: valuationCache?.rows.length ?? null,
       completedAt: new Date(
-        (valuationCache?.expiresAt ?? Date.now()) - CACHE_TTL_MS,
+        valuationCache?.refreshedAt ?? Date.now(),
       ).toISOString(),
     };
   }
   return { ...scanProgress };
 }
 
-export function startScreenerWarmup(): ScanProgress {
-  if (cacheIsFresh()) return getScreenerScanProgress();
-  if (scanPromise || !hasAInvestAuth()) return getScreenerScanProgress();
-  if (
-    scanProgress.state === "error" &&
-    scanProgress.startedAt &&
-    Date.now() - Date.parse(scanProgress.startedAt) < 60_000
-  ) {
-    return getScreenerScanProgress();
-  }
-
-  const startedAt = new Date().toISOString();
-  scanProgress = { state: "warming", scanned: 0, total: null, startedAt };
-  scanPromise = (async () => {
-    try {
-      const first = await fetchUniversePage(0, 1000);
-      const rows = [...first.rows];
-      scanProgress = {
-        ...scanProgress,
-        scanned: rows.length,
-        total: first.total,
-      };
-
-      for (let begin = 1000; begin < first.total; begin += 2000) {
-        const pages = await Promise.all(
-          [begin, begin + 1000]
-            .filter((offset) => offset < first.total)
-            .map((offset) => fetchUniversePage(offset, 1000)),
-        );
-        for (const page of pages) rows.push(...page.rows);
-        scanProgress = { ...scanProgress, scanned: rows.length, total: first.total };
-      }
-
-      const completedAt = new Date().toISOString();
-      valuationCache = { rows, expiresAt: Date.now() + CACHE_TTL_MS };
-      scanProgress = {
-        state: "ready",
-        scanned: rows.length,
-        total: first.total,
-        startedAt,
-        completedAt,
-      };
-    } catch {
-      scanProgress = {
-        ...scanProgress,
-        state: "error",
-        error: "The complete valuation scan could not be refreshed.",
-      };
-    } finally {
-      scanPromise = null;
-    }
-  })();
-  return getScreenerScanProgress();
+function installSnapshot(
+  snapshot: DurableScreenerSnapshot,
+  startedAt?: string,
+): CacheRecord {
+  const record: CacheRecord = {
+    generationId: snapshot.generationId,
+    rows: snapshot.rows,
+    expiresAt: Date.now() + MEMORY_CACHE_TTL_MS,
+    universeRefreshedAt: snapshot.universeRefreshedAt,
+    refreshedAt: snapshot.refreshedAt,
+  };
+  valuationCache = record;
+  scanProgress = {
+    state: "ready",
+    scanned: snapshot.rows.length,
+    total: snapshot.rows.length,
+    ...(startedAt ? { startedAt } : {}),
+    completedAt: new Date(snapshot.refreshedAt).toISOString(),
+  };
+  return record;
 }
 
-function hasGlobalFilters(filters: ScreenerFilters): boolean {
-  return Boolean(
-    filters.fairValueGtePrice ||
-      filters.minMarketCap != null ||
-      filters.maxMarketCap != null ||
-      filters.minPrice != null ||
-      filters.maxPrice != null ||
-      filters.minChangePercent != null ||
-      filters.maxChangePercent != null ||
-      filters.minMispricing != null ||
-      filters.maxMispricing != null ||
-      filters.minPe != null ||
-      filters.maxPe != null ||
-      filters.minRevenueGrowth != null ||
-      filters.maxRevenueGrowth != null ||
-      filters.positiveNetIncome ||
-      filters.positiveFreeCashFlow ||
-      filters.maxDebtToEquity != null ||
-      filters.sector ||
-      filters.exchanges?.length ||
-      filters.symbols?.length ||
-      filters.query,
+async function refreshScreenerSnapshotGeneration(
+  db: D1Database,
+  options: ScreenerSnapshotRefreshOptions,
+  generationRetry = 0,
+): Promise<DurableScreenerSnapshot> {
+  // This timestamp identifies when the scan began, not when its slowest
+  // upstream request happened to finish. The durable pointer uses it to keep a
+  // late older scan from replacing a newer completed generation.
+  const generationRefreshedAt = options.refreshedAt ?? Date.now();
+  const universe = await ensureTopMarketCapUniverse(db);
+  const universeRefreshedAt = universe[0]?.refreshedAt ?? 0;
+  const startedAt = new Date(generationRefreshedAt).toISOString();
+  const scopedUniverse = universe.filter((member) =>
+    REQUIRED_EXCHANGES.has(member.exchange.toLowerCase()),
   );
+  if (scopedUniverse.length === 0) {
+    throw new Error("The Top 1,000 universe contained no NYSE or NASDAQ securities.");
+  }
+  scanProgress = {
+    state: "warming",
+    scanned: 0,
+    total: scopedUniverse.length,
+    startedAt,
+  };
+  try {
+    const rows = await fetchStoredUniverse(
+      scopedUniverse.map((member) => member.marketCode),
+    );
+    assertFilterMetricCoverage(rows);
+    const latestVersion = await readTopMarketCapUniverseVersion(db);
+    if (latestVersion !== universeRefreshedAt) {
+      if (generationRetry === 0) {
+        return await refreshScreenerSnapshotGeneration(
+          db,
+          options,
+          generationRetry + 1,
+        );
+      }
+      throw new Error("The Top 1,000 universe changed during the valuation scan.");
+    }
+    const snapshot = await replaceScreenerSnapshot(db, rows, {
+      ...(options.generationId
+        ? { generationId: options.generationId }
+        : {}),
+      ...(options.dailyRunCompletion
+        ? { dailyRunCompletion: options.dailyRunCompletion }
+        : {}),
+      universeRefreshedAt,
+      refreshedAt: generationRefreshedAt,
+    });
+    installSnapshot(snapshot, startedAt);
+    return snapshot;
+  } catch (error) {
+    scanProgress = {
+      ...scanProgress,
+      state: "error",
+      error: "The Top 1,000 valuation scan could not be refreshed.",
+    };
+    throw error;
+  }
+}
+
+export async function refreshScreenerSnapshot(
+  db: D1Database,
+  options: ScreenerSnapshotRefreshOptions = {},
+): Promise<DurableScreenerSnapshot> {
+  return refreshScreenerSnapshotGeneration(db, options);
+}
+
+async function readValuationCache(db: D1Database): Promise<CacheRecord> {
+  const stored = await readScreenerSnapshot(db);
+  if (stored) return installSnapshot(stored);
+  scanProgress = {
+    state: "error",
+    scanned: 0,
+    total: null,
+    error: "Stored screener results are not available yet.",
+  };
+  throw new ScreenerSnapshotUnavailableError();
+}
+
+async function loadValuationCache(db: D1Database): Promise<CacheRecord> {
+  if (cacheIsFresh() && valuationCache) return valuationCache;
+  if (scanPromise) return scanPromise;
+  const claimedScan = readValuationCache(db);
+  scanPromise = claimedScan;
+  try {
+    return await claimedScan;
+  } finally {
+    if (scanPromise === claimedScan) scanPromise = null;
+  }
 }
 
 export function applyScreenerFilters(
@@ -296,6 +406,12 @@ export function applyScreenerFilters(
     const netIncome = row.netIncome.value;
     const freeCashFlow = row.freeCashFlow.value;
     const debtToEquity = row.debtToEquity.value;
+    const evToEbitda = row.evToEbitda.value;
+    const returnOnInvestedCapital = row.returnOnInvestedCapital.value;
+    const netDebt = row.netDebt.value;
+    const operatingMarginStable5Y = row.operatingMarginStable5Y.value;
+    const operatingMarginsExpanding5Y = row.operatingMarginsExpanding5Y.value;
+    if (!REQUIRED_EXCHANGES.has(row.exchange.toLowerCase())) return false;
     if (filters.fairValueGtePrice && (price == null || fairValue == null || fairValue < price)) return false;
     if (filters.minMarketCap != null && (marketCap == null || marketCap < filters.minMarketCap)) return false;
     if (filters.maxMarketCap != null && (marketCap == null || marketCap > filters.maxMarketCap)) return false;
@@ -306,12 +422,57 @@ export function applyScreenerFilters(
     if (filters.minMispricing != null && (mispricing == null || mispricing < filters.minMispricing)) return false;
     if (filters.maxMispricing != null && (mispricing == null || mispricing > filters.maxMispricing)) return false;
     if (filters.minPe != null && (pe == null || pe < filters.minPe)) return false;
-    if (filters.maxPe != null && (pe == null || pe > filters.maxPe)) return false;
+    if (
+      filters.maxPe != null &&
+      (pe == null || !Number.isFinite(pe) || pe <= 0 || pe > filters.maxPe)
+    )
+      return false;
     if (filters.minRevenueGrowth != null && (revenueGrowth == null || revenueGrowth < filters.minRevenueGrowth)) return false;
     if (filters.maxRevenueGrowth != null && (revenueGrowth == null || revenueGrowth > filters.maxRevenueGrowth)) return false;
     if (filters.positiveNetIncome && (netIncome == null || netIncome <= 0)) return false;
     if (filters.positiveFreeCashFlow && (freeCashFlow == null || freeCashFlow <= 0)) return false;
+    if (
+      filters.minFreeCashFlowYield != null &&
+      (freeCashFlow == null ||
+        freeCashFlow <= 0 ||
+        marketCap == null ||
+        marketCap <= 0 ||
+        freeCashFlow / marketCap < filters.minFreeCashFlowYield)
+    )
+      return false;
+    if (
+      filters.maxEvToEbitda != null &&
+      (evToEbitda == null ||
+        evToEbitda <= 0 ||
+        evToEbitda > filters.maxEvToEbitda)
+    )
+      return false;
+    if (
+      filters.minCashConversion != null &&
+      (netIncome == null ||
+        netIncome <= 0 ||
+        freeCashFlow == null ||
+        freeCashFlow <= 0 ||
+        freeCashFlow / netIncome < filters.minCashConversion)
+    )
+      return false;
+    if (
+      filters.minReturnOnInvestedCapital != null &&
+      (returnOnInvestedCapital == null ||
+        returnOnInvestedCapital < filters.minReturnOnInvestedCapital)
+    )
+      return false;
+    if (
+      filters.maxNetDebtToFreeCashFlow != null &&
+      (netDebt == null ||
+        freeCashFlow == null ||
+        freeCashFlow <= 0 ||
+        netDebt / freeCashFlow > filters.maxNetDebtToFreeCashFlow)
+    )
+      return false;
     if (filters.maxDebtToEquity != null && (debtToEquity == null || debtToEquity > filters.maxDebtToEquity)) return false;
+    if (filters.stableOperatingMargins5Y && operatingMarginStable5Y !== true) return false;
+    if (filters.expandingOperatingMargins5Y && operatingMarginsExpanding5Y !== true) return false;
     if (
       filters.sector &&
       !row.sector.value?.toLowerCase().includes(filters.sector.toLowerCase())
@@ -391,80 +552,27 @@ function responseFromRows(
   };
 }
 
-export async function getScreenerResponse(query: ScreenerQuery): Promise<{
+export async function getScreenerResponse(
+  query: ScreenerQuery,
+  db: D1Database,
+): Promise<{
   response: ScreenerResponse;
   status: number;
 }> {
-  const globalNeeded =
-    hasGlobalFilters(query.filters) ||
-    query.sort === "fairValue" ||
-    query.sort === "mispricing";
-  if (globalNeeded && cacheIsFresh() && valuationCache) {
-    const response = responseFromRows(valuationCache.rows, query, {
-      status: "ready",
-      totalKnown: true,
-      scan: getScreenerScanProgress(),
-      message:
-        "Intrinsic values and the result count are cached for up to 30 minutes; visible quotes were refreshed and current quote filters reapplied for this request.",
-    });
-    response.data = sortScreenerRows(
-      applyScreenerFilters(
-        await refreshCachedPageQuotes(response.data),
-        query.filters,
-      ),
-      query.sort,
-      query.order,
-    );
-    return {
-      response,
-      status: 200,
-    };
-  }
-
-  if (globalNeeded) {
-    startScreenerWarmup();
-    const offset = (query.page - 1) * query.pageSize;
-    const upstreamSort =
-      query.sort === "fairValue" || query.sort === "mispricing"
-        ? "marketCap"
-        : query.sort;
-    const current = await fetchUniversePage(
-      offset,
-      query.pageSize,
-      upstreamSort,
-      query.order,
-    );
-    const latestScan = getScreenerScanProgress();
-    const scanFailed = latestScan.state === "error";
-    return {
-      response: responseFromRows(current.rows, query, {
-        status: scanFailed ? "partial" : "warming",
-        totalKnown: false,
-        alreadyPaged: true,
-        scan: latestScan,
-        message:
-          scanFailed
-            ? "The global valuation scan failed. Results are limited to the current market-cap page."
-            : "Scanning the complete supported universe for comparable fair values.",
-      }),
-      status: scanFailed ? 200 : 202,
-    };
-  }
-
-  const offset = (query.page - 1) * query.pageSize;
-  const current = await fetchUniversePage(
-    offset,
-    query.pageSize,
-    query.sort,
-    query.order,
-  );
-  const response = responseFromRows(current.rows, query, {
+  const cache = await loadValuationCache(db);
+  const response = responseFromRows(cache.rows, query, {
     status: "ready",
-    totalKnown: false,
-    alreadyPaged: true,
+    totalKnown: true,
+    scan: getScreenerScanProgress(),
+    message:
+      "Results use the latest stored daily market snapshot for NYSE and NASDAQ members of the monthly Top 1,000 companies by market cap.",
   });
-  response.page.total = current.total;
-  response.page.totalPages = Math.max(1, Math.ceil(current.total / query.pageSize));
+  response.asOf = new Date(cache.refreshedAt).toISOString();
+  response.snapshot = {
+    generationId: cache.generationId,
+    universeRefreshedAt: new Date(cache.universeRefreshedAt).toISOString(),
+    refreshedAt: response.asOf,
+  };
   return { response, status: 200 };
 }
 

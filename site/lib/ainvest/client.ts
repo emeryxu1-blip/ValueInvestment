@@ -1,3 +1,9 @@
+import {
+  hasAInvestAuthConfig,
+  invalidateAInvestCookie,
+  resolveAInvestCookie,
+} from "./auth.ts";
+
 export type AInvestEndpoint = "snapshot" | "series" | "relation" | "multiKline";
 
 const ENDPOINTS: Record<AInvestEndpoint, string> = {
@@ -31,35 +37,30 @@ export function getAInvestCookie(): string | null {
 }
 
 export function hasAInvestAuth(): boolean {
-  return getAInvestCookie() !== null;
+  return hasAInvestAuthConfig();
 }
 
-export async function fetchAInvest<T = unknown>(
+function isAuthEnvelope(envelope: {
+  status_code?: unknown;
+  status_msg?: unknown;
+}) {
+  const statusCode = Number(envelope.status_code);
+  const statusMessage = String(envelope.status_msg ?? "").toLowerCase();
+  return (
+    statusCode === 106 ||
+    statusCode === 401 ||
+    statusCode === 403 ||
+    /auth|credential|expired|log[ -]?in|session|token/.test(statusMessage)
+  );
+}
+
+async function requestAInvest<T>(
   endpoint: AInvestEndpoint,
   body: unknown,
-  options: {
-    fetcher?: typeof fetch;
-    signal?: AbortSignal;
-    timeoutMs?: number;
-  } = {},
+  cookie: string,
+  fetcher: typeof fetch,
+  signal: AbortSignal,
 ): Promise<T> {
-  const cookie = getAInvestCookie();
-  if (!cookie) {
-    throw new AInvestError("AInvest authentication is not configured.", {
-      kind: "auth",
-      status: 401,
-    });
-  }
-
-  const fetcher = options.fetcher ?? fetch;
-  const timeoutController = new AbortController();
-  const timeout = setTimeout(
-    () => timeoutController.abort("upstream-timeout"),
-    options.timeoutMs ?? 10_000,
-  );
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, timeoutController.signal])
-    : timeoutController.signal;
   let response: Response;
   try {
     response = await fetcher(ENDPOINTS[endpoint], {
@@ -78,8 +79,6 @@ export async function fetchAInvest<T = unknown>(
     throw new AInvestError("The live market data service could not be reached.", {
       kind: "upstream",
     });
-  } finally {
-    clearTimeout(timeout);
   }
 
   if (!response.ok) {
@@ -119,17 +118,70 @@ export async function fetchAInvest<T = unknown>(
   }
   const envelope = payload as { status_code?: unknown; status_msg?: unknown };
   if (envelope.status_code !== 0) {
+    const authFailure = isAuthEnvelope(envelope);
     throw new AInvestError(
       typeof envelope.status_msg === "string" && envelope.status_msg
         ? `AInvest: ${envelope.status_msg}`
         : "The live market data service rejected the request.",
       {
-        kind:
-          String(envelope.status_msg ?? "").toLowerCase().includes("auth")
-            ? "auth"
-            : "upstream",
+        kind: authFailure ? "auth" : "upstream",
+        status: authFailure ? 401 : 502,
       },
     );
   }
   return payload as T;
+}
+
+export async function fetchAInvest<T = unknown>(
+  endpoint: AInvestEndpoint,
+  body: unknown,
+  options: {
+    fetcher?: typeof fetch;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  } = {},
+): Promise<T> {
+  const fetcher = options.fetcher ?? fetch;
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(
+    () => timeoutController.abort("upstream-timeout"),
+    options.timeoutMs ?? 10_000,
+  );
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeoutController.signal])
+    : timeoutController.signal;
+
+  const resolveCookie = async () => {
+    try {
+      return await resolveAInvestCookie({ fetcher, signal });
+    } catch {
+      throw new AInvestError("AInvest authentication is unavailable.", {
+        kind: "auth",
+        status: 401,
+      });
+    }
+  };
+
+  try {
+    let cookie = await resolveCookie();
+    try {
+      return await requestAInvest<T>(endpoint, body, cookie, fetcher, signal);
+    } catch (error) {
+      if (!(error instanceof AInvestError) || error.kind !== "auth") {
+        throw error;
+      }
+      invalidateAInvestCookie(cookie);
+      cookie = await resolveCookie();
+      try {
+        return await requestAInvest<T>(endpoint, body, cookie, fetcher, signal);
+      } catch (retryError) {
+        if (retryError instanceof AInvestError && retryError.kind === "auth") {
+          invalidateAInvestCookie(cookie);
+        }
+        throw retryError;
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }

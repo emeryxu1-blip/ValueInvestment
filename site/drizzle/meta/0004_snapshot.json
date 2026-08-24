@@ -1,0 +1,552 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "64a366e0-3751-4465-bbeb-15015878900f",
+  "prevId": "65a03808-ae85-456d-a373-ceaa1a4b724e",
+  "tables": {
+    "anonymous_sessions": {
+      "name": "anonymous_sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "anonymous_sessions_expires_at_idx": {
+          "name": "anonymous_sessions_expires_at_idx",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "anonymous_sessions_expiry_check": {
+          "name": "anonymous_sessions_expiry_check",
+          "value": "\"anonymous_sessions\".\"expires_at\" > \"anonymous_sessions\".\"created_at\""
+        }
+      }
+    },
+    "saved_screeners": {
+      "name": "saved_screeners",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "filters_json": {
+          "name": "filters_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "columns_json": {
+          "name": "columns_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sort_key": {
+          "name": "sort_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sort_order": {
+          "name": "sort_order",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "saved_screeners_session_updated_idx": {
+          "name": "saved_screeners_session_updated_idx",
+          "columns": [
+            "session_id",
+            "updated_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "saved_screeners_session_id_anonymous_sessions_id_fk": {
+          "name": "saved_screeners_session_id_anonymous_sessions_id_fk",
+          "tableFrom": "saved_screeners",
+          "tableTo": "anonymous_sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "saved_screeners_sort_order_check": {
+          "name": "saved_screeners_sort_order_check",
+          "value": "\"saved_screeners\".\"sort_order\" in ('asc', 'desc')"
+        }
+      }
+    },
+    "screener_snapshot_generations": {
+      "name": "screener_snapshot_generations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "universe_refreshed_at": {
+          "name": "universe_refreshed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "refreshed_at": {
+          "name": "refreshed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "row_count": {
+          "name": "row_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "filter_mask_schema_version": {
+          "name": "filter_mask_schema_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "client_payload_json": {
+          "name": "client_payload_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "client_payload_etag": {
+          "name": "client_payload_etag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        }
+      },
+      "indexes": {
+        "screener_snapshot_generations_created_idx": {
+          "name": "screener_snapshot_generations_created_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "screener_snapshot_generations_row_count_check": {
+          "name": "screener_snapshot_generations_row_count_check",
+          "value": "\"screener_snapshot_generations\".\"row_count\" between 1 and 1000"
+        }
+      }
+    },
+    "screener_snapshot_rows": {
+      "name": "screener_snapshot_rows",
+      "columns": {
+        "generation_id": {
+          "name": "generation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "market_code": {
+          "name": "market_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "exchange": {
+          "name": "exchange",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload_json": {
+          "name": "payload_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "screener_snapshot_rows_generation_id_screener_snapshot_generations_id_fk": {
+          "name": "screener_snapshot_rows_generation_id_screener_snapshot_generations_id_fk",
+          "tableFrom": "screener_snapshot_rows",
+          "tableTo": "screener_snapshot_generations",
+          "columnsFrom": [
+            "generation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "screener_snapshot_rows_pk": {
+          "columns": [
+            "generation_id",
+            "market_code"
+          ],
+          "name": "screener_snapshot_rows_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "screener_snapshot_rows_payload_check": {
+          "name": "screener_snapshot_rows_payload_check",
+          "value": "json_valid(\"screener_snapshot_rows\".\"payload_json\")"
+        }
+      }
+    },
+    "screener_snapshot_state": {
+      "name": "screener_snapshot_state",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "active_generation_id": {
+          "name": "active_generation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "screener_snapshot_state_active_generation_id_screener_snapshot_generations_id_fk": {
+          "name": "screener_snapshot_state_active_generation_id_screener_snapshot_generations_id_fk",
+          "tableFrom": "screener_snapshot_state",
+          "tableTo": "screener_snapshot_generations",
+          "columnsFrom": [
+            "active_generation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "screener_snapshot_state_singleton_check": {
+          "name": "screener_snapshot_state_singleton_check",
+          "value": "\"screener_snapshot_state\".\"id\" = 1"
+        }
+      }
+    },
+    "security_journal": {
+      "name": "security_journal",
+      "columns": {
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "exchange": {
+          "name": "exchange",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "sentiment": {
+          "name": "sentiment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'neutral'"
+        },
+        "watch_price": {
+          "name": "watch_price",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "security_journal_session_updated_idx": {
+          "name": "security_journal_session_updated_idx",
+          "columns": [
+            "session_id",
+            "updated_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "security_journal_session_id_anonymous_sessions_id_fk": {
+          "name": "security_journal_session_id_anonymous_sessions_id_fk",
+          "tableFrom": "security_journal",
+          "tableTo": "anonymous_sessions",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "security_journal_pk": {
+          "columns": [
+            "session_id",
+            "exchange",
+            "symbol"
+          ],
+          "name": "security_journal_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "security_journal_sentiment_check": {
+          "name": "security_journal_sentiment_check",
+          "value": "\"security_journal\".\"sentiment\" in ('bear', 'neutral', 'bull')"
+        },
+        "security_journal_watch_price_check": {
+          "name": "security_journal_watch_price_check",
+          "value": "\"security_journal\".\"watch_price\" is null or \"security_journal\".\"watch_price\" > 0"
+        }
+      }
+    },
+    "top_market_cap_universe": {
+      "name": "top_market_cap_universe",
+      "columns": {
+        "market_code": {
+          "name": "market_code",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "exchange": {
+          "name": "exchange",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "market_cap": {
+          "name": "market_cap",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "market_rank": {
+          "name": "market_rank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "refreshed_at": {
+          "name": "refreshed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "top_market_cap_universe_rank_idx": {
+          "name": "top_market_cap_universe_rank_idx",
+          "columns": [
+            "market_rank"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "top_market_cap_universe_rank_check": {
+          "name": "top_market_cap_universe_rank_check",
+          "value": "\"top_market_cap_universe\".\"market_rank\" between 1 and 1000"
+        },
+        "top_market_cap_universe_market_cap_check": {
+          "name": "top_market_cap_universe_market_cap_check",
+          "value": "\"top_market_cap_universe\".\"market_cap\" >= 0"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

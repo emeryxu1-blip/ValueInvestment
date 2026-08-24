@@ -1,4 +1,5 @@
 import type { FinancialPeriod } from "../contracts";
+import { MINIMUM_PEER_SAMPLE } from "./peer-selection.ts";
 
 export function finiteNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -17,25 +18,18 @@ export function deriveMispricing(
   return fairValue / price - 1;
 }
 
-export function medianPositive(values: Array<number | null | undefined>): number | null {
+export function medianPositive(
+  values: Array<number | null | undefined>,
+  minimumCount = 1,
+): number | null {
   const positive = values
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
     .sort((left, right) => left - right);
-  if (positive.length === 0) return null;
+  if (positive.length < minimumCount) return null;
   const midpoint = Math.floor(positive.length / 2);
   return positive.length % 2 === 0
     ? (positive[midpoint - 1] + positive[midpoint]) / 2
     : positive[midpoint];
-}
-
-export function meanPositive(values: Array<number | null | undefined>): number | null {
-  const positive = values.filter(
-    (value): value is number =>
-      typeof value === "number" && Number.isFinite(value) && value > 0,
-  );
-  return positive.length
-    ? positive.reduce((sum, value) => sum + value, 0) / positive.length
-    : null;
 }
 
 export function derivePeerValue(options: {
@@ -48,9 +42,9 @@ export function derivePeerValue(options: {
   peerPss: Array<number | null>;
 }): number | null {
   if (options.price == null || options.price <= 0) return null;
-  const medianPe = medianPositive(options.peerPes);
-  const medianPb = medianPositive(options.peerPbs);
-  const medianPs = medianPositive(options.peerPss);
+  const medianPe = medianPositive(options.peerPes, MINIMUM_PEER_SAMPLE);
+  const medianPb = medianPositive(options.peerPbs, MINIMUM_PEER_SAMPLE);
+  const medianPs = medianPositive(options.peerPss, MINIMUM_PEER_SAMPLE);
   const implied = [
     options.pe && options.pe > 0 && medianPe
       ? (options.price / options.pe) * medianPe
@@ -62,28 +56,7 @@ export function derivePeerValue(options: {
       ? (options.price / options.ps) * medianPs
       : null,
   ];
-  return meanPositive(implied);
-}
-
-export function combineFairValues(
-  dcfValue: number | null,
-  peerValue: number | null,
-): number | null {
-  const values = [dcfValue, peerValue].filter(
-    (value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0,
-  );
-  if (values.length === 0) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-export function scenarioValues(baseValue: number | null): {
-  bear: number | null;
-  base: number | null;
-  bull: number | null;
-} {
-  return baseValue == null
-    ? { bear: null, base: null, bull: null }
-    : { bear: baseValue * 0.8, base: baseValue, bull: baseValue * 1.2 };
+  return medianPositive(implied);
 }
 
 type DcfModule = {
@@ -111,16 +84,43 @@ export function parseDcfModule(value: unknown): {
   latestAdjustedPrice: number | null;
 } {
   const dcfPayload = value && typeof value === "object" ? (value as DcfModule) : {};
-  const predicted = datedNumberPoints(dcfPayload.predicted_prices).sort((left, right) =>
-    right[0].localeCompare(left[0]),
+  const predicted = datedNumberPoints(dcfPayload.predicted_prices).sort(
+    (left, right) =>
+      yyyymmddToIso(right[0]).localeCompare(yyyymmddToIso(left[0])),
   );
   return {
     fairValue: predicted[0]?.[1] ?? null,
     predicted,
     history: datedNumberPoints(dcfPayload.history_prices).sort((left, right) =>
-      left[0].localeCompare(right[0]),
+      yyyymmddToIso(left[0]).localeCompare(yyyymmddToIso(right[0])),
     ),
     latestAdjustedPrice: finiteNumber(dcfPayload.latest_qfq_price),
+  };
+}
+
+type GrowthForecastModule = {
+  freecash?: unknown;
+  freecash_pred?: unknown;
+};
+
+export function parseGrowthForecastModule(value: unknown): {
+  reported: Array<[string, number]>;
+  forecast: Array<[string, number]>;
+} {
+  const payload =
+    value && typeof value === "object"
+      ? (value as GrowthForecastModule)
+      : {};
+  const normalize = (points: unknown) =>
+    datedNumberPoints(points)
+      .map(([period, amount]): [string, number] => [
+        yyyymmddToIso(period),
+        amount,
+      ])
+      .sort((left, right) => left[0].localeCompare(right[0]));
+  return {
+    reported: normalize(payload.freecash),
+    forecast: normalize(payload.freecash_pred),
   };
 }
 
@@ -150,9 +150,6 @@ export function parseEarningsRevenueModule(value: unknown): {
         period,
         revenue: finiteNumber(row.operating_income_total),
         netIncome: finiteNumber(row.net_profit),
-        freeCashFlow: null,
-        debt: null,
-        cash: null,
         fiscalYear: String(row.year ?? period.slice(0, 4)),
         isYearEnd: String(row.period ?? "") === "596006",
       };
@@ -182,9 +179,6 @@ export function parseEarningsRevenueModule(value: unknown): {
       netIncome: periods.every((period) => period.netIncome != null)
         ? periods.reduce((sum, period) => sum + (period.netIncome ?? 0), 0)
         : null,
-      freeCashFlow: null,
-      debt: null,
-      cash: null,
     }))
     .sort((left, right) => left.period.localeCompare(right.period))
     .slice(-5);
@@ -197,9 +191,6 @@ export function parseEarningsRevenueModule(value: unknown): {
         period: period.period,
         revenue: period.revenue,
         netIncome: period.netIncome,
-        freeCashFlow: period.freeCashFlow,
-        debt: period.debt,
-        cash: period.cash,
       })),
   };
 }

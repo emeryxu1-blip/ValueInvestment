@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
+import { createReadStream } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dirname, "..");
-const authPath = resolve(projectRoot, "../skills/Cauth.json");
+const devVarsPath = resolve(projectRoot, ".dev.vars");
 const roots = [
   "dist",
   ".next",
@@ -32,21 +33,37 @@ const roots = [
   "wrangler.jsonc",
 ];
 
-let credentials;
+let devVars = "";
 try {
-  credentials = JSON.parse(await readFile(authPath, "utf8"));
+  devVars = await readFile(devVarsPath, "utf8");
 } catch {
-  console.log("Credential scan skipped: local Cauth.json is unavailable.");
-  process.exit(0);
+  // Local login credentials are optional during CI and fail-closed builds.
+}
+
+function envFileValue(name) {
+  const match = devVars.match(new RegExp(`^(?:export\\s+)?${name}\\s*=\\s*(.*)$`, "m"));
+  if (!match) return null;
+  const value = match[1].trim();
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 const needles = [
-  credentials.userid,
-  credentials.sessionid,
-  credentials.userid ? `userid=${credentials.userid}` : null,
-  credentials.sessionid ? `sessionid=${credentials.sessionid}` : null,
+  envFileValue("AINVEST_EMAIL"),
+  envFileValue("AINVEST_PASSWORD"),
+  envFileValue("AINVEST_C_COOKIE"),
+  process.env.AINVEST_EMAIL,
+  process.env.AINVEST_PASSWORD,
+  process.env.AINVEST_C_COOKIE,
 ]
   .filter((value) => typeof value === "string" && value.length > 0)
+  .filter((value, index, values) => values.indexOf(value) === index)
   .map((value) => Buffer.from(value));
 
 async function scan(target, hits) {
@@ -62,19 +79,39 @@ async function scan(target, hits) {
     }
     return;
   }
-  if (!details.isFile() || details.size > 8_000_000) return;
-  const contents = await readFile(target);
-  if (needles.some((needle) => contents.includes(needle))) hits.push(target);
+  if (!details.isFile()) return;
+
+  const overlapLength = Math.max(
+    0,
+    ...needles.map((needle) => needle.length - 1),
+  );
+  let overlap = Buffer.alloc(0);
+  for await (const chunk of createReadStream(target)) {
+    const contents = overlap.length > 0 ? Buffer.concat([overlap, chunk]) : chunk;
+    if (needles.some((needle) => contents.includes(needle))) {
+      hits.push(target);
+      return;
+    }
+    overlap = overlapLength > 0 ? contents.subarray(-overlapLength) : overlap;
+  }
 }
 
 const hits = [];
 for (const root of roots) await scan(resolve(projectRoot, root), hits);
 
-credentials = undefined;
+devVars = "";
+if (needles.length === 0) {
+  console.log("Credential scan skipped: no local authentication values are available.");
+  process.exit(0);
+}
 if (hits.length > 0) {
-  console.error(`Credential material found in ${hits.length} generated or source file(s).`);
+  console.error(
+    `Credential material found in ${hits.length} generated or source file(s):\n${hits
+      .map((hit) => `- ${relative(projectRoot, hit)}`)
+      .join("\n")}`,
+  );
   process.exit(1);
 }
 console.log(
-  "Credential scan passed: no userid/sessionid values in source, assets, bundles, or local build logs.",
+  "Credential scan passed: no authentication values in source, assets, bundles, or local build logs.",
 );

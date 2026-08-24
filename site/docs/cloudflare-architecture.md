@@ -8,10 +8,11 @@ using Cloudflare's supported full-stack Next.js adapter,
 
 The standard Next.js build is packaged by OpenNext as a Worker handler and a
 static-asset directory. `worker/index.ts` wraps that generated handler so the
-same deployment can apply API rate limits and run the daily anonymous-session
-cleanup. Wrangler deploys the wrapper, the OpenNext application, Static Assets,
-D1 bindings, rate-limit bindings, the market-data secret, and the Cron Trigger
-as one Worker service.
+same deployment can apply API rate limits, run trading-day anonymous-session
+cleanup, publish a durable pre-open screener snapshot, and refresh the Top 1,000
+market-cap universe on the last day of each month. Wrangler deploys the wrapper,
+the OpenNext application, Static Assets, D1 bindings, rate-limit bindings, the
+market-data secrets, and both Cron Triggers as one Worker service.
 
 Do not deploy the current application as a static Cloudflare Pages project.
 Cloudflare's [Next.js Pages guide](https://developers.cloudflare.com/pages/framework-guides/nextjs/)
@@ -36,11 +37,13 @@ flowchart LR
     Worker["Cloudflare Worker\ncustom wrapper"]
     OpenNext["OpenNext Next.js handler\nApp Router and route handlers"]
     Assets["Workers Static Assets\n.open-next/assets"]
-    D1[("Cloudflare D1\nworkspace and future screener snapshot")]
+    EdgeCache[("Workers Cache API\ncompact screener payload")]
+    D1[("Cloudflare D1\nsaved-screen workspace, Top 1,000 universe,\ndaily run ledger, and screener snapshots")]
     Market["Upstream market-data APIs"]
-    Secret["Worker secret\nAINVEST_C_COOKIE"]
+    Secret["Worker secrets\nAINVEST_EMAIL and AINVEST_PASSWORD"]
 
     Browser --> Worker
+    Worker --> EdgeCache
     Worker --> OpenNext
     Worker --> Assets
     OpenNext --> D1
@@ -57,12 +60,12 @@ simple and allows mutation routes to reject cross-origin requests.
 | --- | --- | --- |
 | UI and routes | Next.js App Router and React | Screens, React Server Components, client interactions, and route composition |
 | Next.js adapter | `@opennextjs/cloudflare` | Packages the Next.js server as `.open-next/worker.js` and browser assets as `.open-next/assets` |
-| Edge runtime | Cloudflare Worker | Dynamic rendering, API execution, secret access, D1 access, rate limiting, scheduled cleanup, and static-asset dispatch |
+| Edge runtime | Cloudflare Worker | Dynamic rendering, API execution, secret access, D1 access, rate limiting, a five-minute compact-snapshot cache, trading-day pre-open refresh, scheduled cleanup and universe refresh, and static-asset dispatch |
 | Static delivery | Workers Static Assets | Serves the OpenNext asset output from the Worker deployment |
-| API | Next.js route handlers | Security summary, series, peers, valuation analysis, business quality, screener, and workspace CRUD |
-| Database | Cloudflare D1 with Drizzle ORM | Anonymous sessions, notes/stance/watch prices, saved screener definitions, and saved baseline symbols |
+| API | Next.js route handlers | Security summary, series, peers, valuation analysis, business quality, screener, and saved-screener workspace CRUD |
+| Database | Cloudflare D1 with Drizzle ORM | Anonymous sessions, saved screener definitions, the monthly Top 1,000 universe, immutable screener generations, and the per-trading-date execution ledger |
 | Schema migrations | Drizzle SQL applied by Wrangler | Repeatable local and remote D1 setup |
-| Market data | Server-side `fetch` from the Worker | Keeps the upstream cookie out of the browser |
+| Market data | Server-side `fetch` from the Worker | Retrieves, caches, and renews the upstream session without exposing it to the browser |
 
 The relevant project configuration is:
 
@@ -71,9 +74,21 @@ The relevant project configuration is:
   `next dev` can access local bindings.
 - `wrangler.jsonc`: Worker entry point, compatibility flags, Static Assets
   binding, OpenNext's `WORKER_SELF_REFERENCE` service binding, D1 binding, API
-  rate-limit bindings, Cron Trigger, and observability.
+  rate-limit bindings, Cron Triggers, and observability.
 - `worker/index.ts`: wraps the generated OpenNext handler, applies rate limits,
-  and deletes expired anonymous workspaces on the daily Cron Trigger.
+  deletes expired anonymous workspaces, publishes the trading-day D1 screener
+  snapshot before the New York market opens, and refreshes the market-cap
+  universe on the last day of each month.
+- `lib/market-calendar.ts` and `lib/screener/schedule.ts`: convert Cloudflare's
+  UTC candidate schedule to New York time and admit only 08:00, 08:30, and
+  09:00 on supported NYSE trading days.
+- `lib/screener/daily-refresh.ts`: claims one leased D1 run per New York trading
+  date, retries failed or expired attempts, and makes successful repeats no-op.
+- `lib/screener/universe.ts`: validates, reads, initializes, and replaces the
+  ranked Top 1,000 universe stored in D1.
+- `lib/screener/snapshot.ts`: validates and stores immutable detailed screener
+  generations plus their compact client payload before atomically making one
+  active.
 - `db/schema.ts` and `drizzle/`: Drizzle schema and D1 migration.
 - `db/index.ts`: creates the Drizzle client from the `DB` binding exposed by
   OpenNext's Cloudflare context.
@@ -92,31 +107,88 @@ is relevant only to the split alternative described below.
 2. The custom Worker wrapper applies coarse per-client-IP limits to the public
    security and screener API families, then delegates to OpenNext.
 3. The route handler validates the exchange, symbol, query, and filter inputs.
-4. Server code calls the upstream market-data service using the
-   `AINVEST_C_COOKIE` Worker secret.
-5. Server modules normalize source data and calculate canonical valuation,
-   ratios, scoring, and screener results.
-6. The API returns a provider-neutral response. Missing data remains `null`
+4. Security-analysis routes use an isolate-local cached AInvest session. If no session is
+   available, it signs in with the `AINVEST_EMAIL` and `AINVEST_PASSWORD`
+   Worker secrets.
+5. If AInvest rejects the session as expired, the server invalidates only that
+   session, deduplicates concurrent sign-ins, and retries the data request once.
+6. For `/api/screener/snapshot`, the Worker first checks its five-minute Cache
+   API entry. On a miss, the route reads one active generation record from D1
+   and returns its validated compact JSON with a stable ETag. Successful
+   current-schema responses are cached; errors and rollout-bridge responses
+   using the prior filter schema are not. The browser and Worker cache key both
+   include the current schema version. Normal requests do not contact AInvest
+   or read the 1,000 detailed row records. A generation created before compact
+   payloads existed is rebuilt once from those stored D1 rows without an
+   upstream request. Readers accept filter-mask schemas one through three;
+   only schema-three responses use the current cache key.
+7. The browser downloads that compact validated generation once. Every filter
+   has a precomputed membership bit, so filter combinations, sorting, columns,
+   pagination, and saved-screen changes are applied locally without another API
+   request. Schema two added stored memberships for FCF yield, EV / EBITDA,
+   cash conversion, ROIC, and net debt / FCF. Schema three tightens margin of
+   safety to 20%, requires a positive P/E no greater than 15×, and raises FCF
+   yield to 5%; it also retires the session-momentum and debt/equity controls.
+   Prior-schema generations remain readable during refresh, while incompatible
+   controls stay hidden. If no
+   active generation exists, the public endpoint returns a
+   provider-neutral unavailable response without contacting AInvest; only the
+   scheduled refresh or an explicit administrative seed can publish one.
+8. Other server modules normalize source data and calculate canonical
+   valuation, ratios, and scoring for security-analysis routes.
+9. The API returns a provider-neutral response. Missing data remains `null`
    with provenance or reason metadata rather than being invented in the
    browser.
 
+### Scheduled maintenance
+
+1. Cloudflare invokes `0,30 12-14 * * mon-fri` in UTC. The Worker converts the
+   scheduled instant to `America/New_York` and accepts only 08:00, 08:30, or
+   09:00 on a supported NYSE trading day. This fixed UTC candidate grid remains
+   DST-safe; the unused candidates exit without work. The three accepted times
+   provide retries before the 09:30 core market open.
+2. An accepted attempt atomically leases that New York trading date in
+   `screener_snapshot_daily_runs`. The first successful attempt fetches the
+   scoped Top 1,000 details in bounded batches, derives canonical valuation and
+   five-year operating-margin metrics, normalizes ROIC, EV / EBITDA, and net
+   debt, and writes deterministic generation `daily-YYYY-MM-DD`. Duplicate
+   attempts no-op after success; failed or expired leases may be reclaimed.
+3. Exact membership, required indicator descriptors, row count, and minimum
+   input coverage are validated before the generation rows, active pointer, and
+   daily-run completion commit in one D1 batch. A failed refresh leaves the
+   prior snapshot active, and generations referenced by the daily ledger are
+   retained instead of entering short-term cleanup.
+4. The `47 3 L * *` trigger runs on the last day of each month. It fetches the
+   market-cap ranking from AInvest, requires exactly 1,000 unique valid
+   securities, and replaces the D1 `top_market_cap_universe` rows. Snapshot
+   publication remains owned by the next accepted trading-day run.
+5. Each stored universe row contains its market code, routed exchange, ticker,
+   market cap, rank, and refresh timestamp. The immutable snapshot rows store
+   normalized metrics plus the precomputed filter mask in generation-scoped
+   rows. The generation record also carries a schema-versioned compact JSON
+   payload and content hash for client delivery.
+
 ### Anonymous workspace
 
-1. A workspace request receives or creates a random 256-bit opaque session
-   token.
+1. A saved-screener workspace request receives or creates a random 256-bit
+   opaque session token.
 2. The browser gets the token as an `HttpOnly`, `SameSite=Lax` cookie, with
    `Secure` added on HTTPS.
 3. Only the token's SHA-256 digest is stored in D1.
-4. Journal and screener rows are scoped to that digest.
+4. Saved-screener rows are scoped to that digest.
 5. Mutation routes require a same-origin `Origin` and cap JSON request bodies.
-6. Saved-screener definitions and baseline chunks are committed in one D1
-   batch, and each insert stays below D1's bound-parameter limit.
-7. A daily Cron Trigger deletes expired sessions; foreign-key cascades remove
-   their workspace rows.
+6. A saved screener persists only its name, filter definition, visible columns,
+   and sort choice; it does not store result membership or comparison symbols.
+7. The accepted pre-open trading-day job deletes expired sessions; foreign-key
+   cascades remove their saved-screener rows.
 
 This is anonymous persistence, not authentication. It does not provide account
 recovery, cross-device sync, or access-control guarantees against someone who
 possesses the browser cookie.
+
+The historical `security_journal` table remains in the schema and migration
+history so existing rows are not destructively deleted. There is no active
+journal UI or API, and the application does not write new journal rows.
 
 ## Configuration and deployment
 
@@ -124,54 +196,60 @@ possesses the browser cookie.
 
 - Node.js `>=22.13.0`
 - A Cloudflare account authenticated with Wrangler
-- A valid upstream market-data cookie and permission to use and redistribute
-  the provider's data
+- A valid AInvest account and permission to use and redistribute the provider's
+  data
 
-The checked-in `database_id` in `wrangler.jsonc` is a non-working placeholder.
-A real deployment requires:
+The checked-in `database_id` in `wrangler.jsonc` points to the provisioned
+`value-investment` D1 database. A deployment to the current Cloudflare account
+requires:
 
-1. Install dependencies and create D1:
+1. Install dependencies and authenticate:
 
    ```bash
    npm install
    npx wrangler login
-   npx wrangler d1 create value-investment
    ```
 
-2. Replace the placeholder `database_id` in `wrangler.jsonc` with the ID
-   returned by Wrangler.
-3. Regenerate Cloudflare binding types and apply the migration:
+   For a different Cloudflare account, create a D1 database with
+   `npx wrangler d1 create value-investment` and replace the checked-in
+   `database_id` with the new ID.
+
+2. Regenerate Cloudflare binding types and apply the migration:
 
    ```bash
    npm run cf:typegen
    npm run db:migrate:remote
    ```
 
-4. Add the upstream credential as a Worker secret:
+3. Add the upstream credentials as Worker secrets:
 
    ```bash
-   npx wrangler secret put AINVEST_C_COOKIE
+   npx wrangler secret put AINVEST_EMAIL
+   npx wrangler secret put AINVEST_PASSWORD
    ```
 
    Use a
    [Worker secret](https://developers.cloudflare.com/workers/configuration/secrets/),
-   not a plaintext `vars` value or a browser environment variable.
+   not a plaintext `vars` value or a browser environment variable. Remove the
+   legacy `AINVEST_C_COOKIE` secret after migration; it is accepted only by
+   cookie-only deployments that do not configure the credential pair.
 
-5. Build and verify the Worker locally:
+4. Build and verify the Worker locally:
 
    ```bash
    npm test
    npm run preview
    ```
 
-6. Deploy:
+5. Deploy:
 
    ```bash
    npm run deploy
    ```
 
-7. Smoke-test the deployed summary, valuation, business-quality, screener, and
-   workspace read/write/delete flows before attaching the production domain.
+6. Smoke-test the deployed summary, valuation, business-quality, screener, and
+   saved-screener read/write/delete flows before attaching the production
+   domain.
 
 For local development:
 
@@ -180,6 +258,10 @@ npm run db:migrate:local
 npm run dev
 ```
 
+Store `AINVEST_EMAIL` and `AINVEST_PASSWORD` in the ignored `.dev.vars` file.
+Do not use `.env.local` for these values: OpenNext compiles `.env*` values into
+its Worker output during a production build.
+
 `npm run build` creates the normal Next.js build. `npm run build:worker`
 creates the deployable `.open-next` Worker and asset output. `npm run preview`
 and `npm run deploy` rebuild that OpenNext output before previewing or
@@ -187,16 +269,19 @@ deploying it.
 
 ## Production hardening still required
 
-- Replace the in-memory full-universe screener cache with a scheduled
-  Worker/Queue refresh and a durable, generation-based D1 snapshot. Disposable
-  isolates cannot provide a shared global cache.
+- The durable screener snapshot prioritizes instant interaction and consistent
+  filter membership over intraday quote ticks. If intraday screener quotes
+  become a requirement, add a separate lightweight scheduled quote generation
+  rather than returning provider calls to the public request path.
 - Revisit the initial rate policy (120 security requests and 30 screener
   requests per minute per connecting IP) against real traffic. Cloudflare's
   [Workers rate-limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
   is intentionally permissive and local. Replace the coarse IP key with an
   authenticated account or Cloudflare Access identity if the product gains an
   identity model.
-- Monitor upstream timeouts, credential expiry, D1 errors, and scan freshness.
+- Monitor upstream timeouts, rejected sign-ins, D1 errors, and scan freshness.
+  AInvest risk challenges such as CAPTCHA cannot be completed inside a Worker;
+  authentication fails closed without repeatedly attempting the password.
 - Verify the market-data provider's terms, licensing, attribution, caching, and
   redistribution requirements before launch. The technical secret boundary
   does not grant data-use rights.
@@ -233,7 +318,8 @@ Required changes:
    App Router build cannot be copied to Pages unchanged.
 2. Move every `/api/*` handler into Pages Functions or, preferably for minimal
    coupling, a separate Cloudflare Worker.
-3. Bind D1 and the market-data secret to that function or Worker runtime.
+3. Bind D1 and the market-data login secrets to that function or Worker
+   runtime.
 4. Keep the API same-origin if possible. If it uses another hostname, add a
    strict CORS allowlist and redesign the cookie and CSRF boundary deliberately.
 5. Update the frontend's relative `/api/...` calls and deployment tests.

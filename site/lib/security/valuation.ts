@@ -3,35 +3,31 @@ import type {
   AnalysisPeer,
   SecurityAnalysisResponse,
 } from "../contracts";
+import {
+  parseDcfModule,
+  parseGrowthForecastModule,
+  yyyymmddToIso,
+} from "./derivations.ts";
+import { MINIMUM_PEER_SAMPLE } from "./peer-selection.ts";
 
-export type DcfAssumptions = {
-  cashFlowGrowth: number;
-  discountRate: number;
-  terminalGrowth: number;
+export type DcfCashFlowPoint = {
+  period: string;
+  value: number;
 };
 
-export type DcfProjection = {
-  year: number;
-  cashFlow: number;
-  discountFactor: number;
-  presentValue: number;
+export type DcfCashFlowEvidence = {
+  reported: DcfCashFlowPoint[];
+  forecast: DcfCashFlowPoint[];
+  latestReported: number | null;
+  trailingFourQuarter: number | null;
+  nextForecast: number | null;
+  forwardFourQuarter: number | null;
+  forwardGrowth: number | null;
 };
 
-export type DcfModel = {
-  projections: DcfProjection[];
-  presentValueOfForecast: number;
-  presentValueOfTerminal: number;
-  enterpriseValue: number;
-  equityValue: number;
-  shares: number;
-  perShare: number;
-};
-
-type DcfInputs = {
-  startingCashFlow: number;
-  cash: number;
-  debt: number;
-  shares: number;
+export type DcfValuePoint = {
+  period: string;
+  value: number;
 };
 
 export type RelativeMeasure = {
@@ -42,22 +38,23 @@ export type RelativeMeasure = {
   denominatorPerShare: number | null;
   impliedValue: number | null;
   premiumDiscount: number | null;
-};
-
-export type ValuationScenario = {
-  label: "Conservative" | "Base" | "Optimistic";
-  value: number;
+  peerSampleSize: number;
 };
 
 export type DcfValuation = {
   kind: "dcf";
-  assumptions: DcfAssumptions;
-  model: DcfModel | null;
+  method: "ainvest-dcf";
+  providerValue: number | null;
+  providerValuePeriod: string | null;
+  providerValueAsOf: string | null;
+  cashFlow: DcfCashFlowEvidence;
+  cashFlowAsOf: string | null;
+  providerValuePeriods: DcfValuePoint[];
   price: number | null;
+  priceAsOf: string | null;
   baseValue: number | null;
   gap: number | null;
   opportunity: string;
-  scenarios: ValuationScenario[];
   modelVersion: typeof VALUATION_MODEL_VERSION;
 };
 
@@ -66,92 +63,22 @@ export type RelativeValuation = {
   measures: RelativeMeasure[];
   relativeValue: number | null;
   price: number | null;
+  priceAsOf: string | null;
+  peerAsOf: string | null;
   baseValue: number | null;
   gap: number | null;
   opportunity: string;
-  scenarios: ValuationScenario[];
-  aggregation: "mean-positive-implied-values";
+  aggregation: "median-positive-implied-values";
   modelVersion: typeof VALUATION_MODEL_VERSION;
 };
 
 export type SecurityValuation = DcfValuation | RelativeValuation;
 
-export const VALUATION_MODEL_VERSION = "2026-07-23.1";
-
-export const DEFAULT_DCF_ASSUMPTIONS: DcfAssumptions = {
-  cashFlowGrowth: 8,
-  discountRate: 9,
-  terminalGrowth: 3,
-};
-
-const finitePositive = (value: number) =>
-  Number.isFinite(value) && value > 0;
-
-export function calculateCashFlowValue(
-  inputs: DcfInputs,
-  assumptions: DcfAssumptions,
-): DcfModel | null {
-  if (
-    !finitePositive(inputs.startingCashFlow) ||
-    !finitePositive(inputs.shares) ||
-    !Number.isFinite(inputs.cash) ||
-    !Number.isFinite(inputs.debt)
-  ) {
-    return null;
-  }
-
-  const growth = assumptions.cashFlowGrowth / 100;
-  const discount = assumptions.discountRate / 100;
-  const terminalGrowth = assumptions.terminalGrowth / 100;
-  if (
-    !Number.isFinite(growth) ||
-    !Number.isFinite(discount) ||
-    !Number.isFinite(terminalGrowth) ||
-    discount <= terminalGrowth ||
-    discount <= -1 ||
-    growth <= -1
-  ) {
-    return null;
-  }
-
-  const projections = Array.from({ length: 5 }, (_, index) => {
-    const year = index + 1;
-    const cashFlow = inputs.startingCashFlow * (1 + growth) ** year;
-    const discountFactor = 1 / (1 + discount) ** year;
-    return {
-      year,
-      cashFlow,
-      discountFactor,
-      presentValue: cashFlow * discountFactor,
-    };
-  });
-  const finalCashFlow = projections[projections.length - 1].cashFlow;
-  const terminalValue =
-    (finalCashFlow * (1 + terminalGrowth)) /
-    (discount - terminalGrowth);
-  const presentValueOfForecast = projections.reduce(
-    (sum, projection) => sum + projection.presentValue,
-    0,
-  );
-  const presentValueOfTerminal =
-    terminalValue / (1 + discount) ** projections.length;
-  const enterpriseValue = presentValueOfForecast + presentValueOfTerminal;
-  const equityValue = enterpriseValue + inputs.cash - inputs.debt;
-  if (!finitePositive(equityValue)) return null;
-
-  return {
-    projections,
-    presentValueOfForecast,
-    presentValueOfTerminal,
-    enterpriseValue,
-    equityValue,
-    shares: inputs.shares,
-    perShare: equityValue / inputs.shares,
-  };
-}
+export const VALUATION_MODEL_VERSION = "2026-08-12.1";
 
 export function medianPositive(
   values: Array<number | null>,
+  minimumCount = 1,
 ): number | null {
   const sorted = values
     .filter(
@@ -159,35 +86,11 @@ export function medianPositive(
         value !== null && Number.isFinite(value) && value > 0,
     )
     .sort((left, right) => left - right);
-  if (!sorted.length) return null;
+  if (sorted.length < minimumCount) return null;
   const midpoint = Math.floor(sorted.length / 2);
   return sorted.length % 2
     ? sorted[midpoint]
     : (sorted[midpoint - 1] + sorted[midpoint]) / 2;
-}
-
-export function meanPositive(
-  values: Array<number | null>,
-): number | null {
-  const usable = values.filter(
-    (value): value is number =>
-      value !== null && Number.isFinite(value) && value > 0,
-  );
-  return usable.length
-    ? usable.reduce((sum, value) => sum + value, 0) / usable.length
-    : null;
-}
-
-export function valuationScenarios(
-  baseValue: number | null,
-): ValuationScenario[] {
-  return baseValue !== null && Number.isFinite(baseValue) && baseValue > 0
-    ? [
-        { label: "Conservative", value: baseValue * 0.8 },
-        { label: "Base", value: baseValue },
-        { label: "Optimistic", value: baseValue * 1.2 },
-      ]
-    : [];
 }
 
 export function analysisMetricNumber(
@@ -207,117 +110,85 @@ export function positiveNumber(value: number | null): number | null {
   return value !== null && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-export function calculateDcfFromMetrics(
+function metricObject(
   metrics: Record<string, AnalysisMetric>,
-  assumptions: DcfAssumptions,
-): DcfModel | null {
-  const startingCashFlow = positiveNumber(
-    analysisMetricNumber(metrics, "freeCashFlow"),
-  );
-  const price = positiveNumber(analysisMetricNumber(metrics, "price"));
-  const marketCap = positiveNumber(
-    analysisMetricNumber(metrics, "marketCap"),
-  );
-  if (startingCashFlow === null || price === null || marketCap === null) {
-    return null;
-  }
-
-  const cash = analysisMetricNumber(metrics, "cash");
-  const debt = analysisMetricNumber(metrics, "debt");
-  if (cash === null || debt === null) return null;
-  const reportedShares = positiveNumber(
-    analysisMetricNumber(metrics, "sharesOutstanding"),
-  );
-  const inferredShares = marketCap / price;
-  const shares =
-    reportedShares !== null &&
-    reportedShares > inferredShares / 100 &&
-    reportedShares < inferredShares * 100
-      ? reportedShares
-      : inferredShares;
-  return calculateCashFlowValue(
-    { startingCashFlow, cash, debt, shares },
-    assumptions,
-  );
+  key: string,
+): Record<string, unknown> | null {
+  const value = metrics[key]?.value;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function peerMetric(peer: AnalysisPeer, key: string): number | null {
   return analysisMetricNumber(peer.metrics, key);
 }
 
+const metricAsOf = (
+  metrics: Record<string, AnalysisMetric> | undefined,
+  key: string,
+): string | null => metrics?.[key]?.asOf ?? null;
+
+const latestAsOf = (values: Array<string | null | undefined>): string | null =>
+  values
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? null;
+
 export function calculateRelativeMeasures(
   data: Pick<SecurityAnalysisResponse, "metrics" | "peers">,
 ): RelativeMeasure[] {
   const price = positiveNumber(analysisMetricNumber(data.metrics, "price"));
-  const marketCap = positiveNumber(
-    analysisMetricNumber(data.metrics, "marketCap"),
-  );
-  const reportedShares = positiveNumber(
-    analysisMetricNumber(data.metrics, "sharesOutstanding"),
-  );
-  const shares =
-    reportedShares ??
-    (price !== null && marketCap !== null ? marketCap / price : null);
-  const revenue = positiveNumber(
-    analysisMetricNumber(data.metrics, "revenue"),
-  );
-  const eps = positiveNumber(analysisMetricNumber(data.metrics, "eps"));
-  const bookValuePerShare = positiveNumber(
-    analysisMetricNumber(data.metrics, "bookValuePerShare"),
-  );
-
   const definitions: Array<{
     id: RelativeMeasure["id"];
     label: string;
-    denominator: number | null;
   }> = [
-    { id: "pe", label: "Price / earnings", denominator: eps },
-    {
-      id: "ps",
-      label: "Price / sales",
-      denominator:
-        revenue !== null && shares !== null && shares > 0
-          ? revenue / shares
-          : null,
-    },
-    {
-      id: "pb",
-      label: "Price / book",
-      denominator: bookValuePerShare,
-    },
+    { id: "pe", label: "Price / earnings" },
+    { id: "ps", label: "Price / sales" },
+    { id: "pb", label: "Price / book" },
   ];
 
-  return definitions.map(({ id, label, denominator }) => {
+  return definitions.map(({ id, label }) => {
+    const peerValues = data.peers.map((peer) => peerMetric(peer, id));
     const peerMedian = medianPositive(
-      data.peers.map((peer) => peerMetric(peer, id)),
+      peerValues,
+      MINIMUM_PEER_SAMPLE,
     );
     const companyMultiple = positiveNumber(
       analysisMetricNumber(data.metrics, id),
     );
+    const denominatorPerShare =
+      price !== null && companyMultiple !== null
+        ? price / companyMultiple
+        : null;
     return {
       id,
       label,
       companyMultiple,
       peerMedian,
-      denominatorPerShare: denominator,
+      denominatorPerShare,
       impliedValue:
-        peerMedian !== null && denominator !== null
-          ? peerMedian * denominator
+        peerMedian !== null && denominatorPerShare !== null
+          ? peerMedian * denominatorPerShare
           : null,
       premiumDiscount:
         companyMultiple !== null && peerMedian !== null
           ? companyMultiple / peerMedian - 1
           : null,
+      peerSampleSize: peerValues.filter(
+        (value): value is number =>
+          value !== null && Number.isFinite(value) && value > 0,
+      ).length,
     };
   });
 }
 
 export function opportunityLabel(gap: number | null): string {
   if (gap === null) return "Needs more evidence";
-  if (gap >= 0.2) return "Wide margin of safety";
-  if (gap >= 0) return "Potential opportunity";
-  if (gap >= -0.1) return "Near fair value";
-  return "Price leads the evidence";
+  if (gap >= 0.2) return "Wide implied value gap";
+  if (gap >= 0) return "Positive implied value gap";
+  if (gap >= -0.1) return "Near indicated value";
+  return "Price above indicated value";
 }
 
 function valuationEnvelope(
@@ -333,22 +204,64 @@ function valuationEnvelope(
     baseValue,
     gap,
     opportunity: opportunityLabel(gap),
-    scenarios: valuationScenarios(baseValue),
   };
 }
 
+const points = (values: Array<[string, number]>): DcfCashFlowPoint[] =>
+  values.map(([period, value]) => ({ period, value }));
+
+const sumFour = (values: DcfCashFlowPoint[]): number | null =>
+  values.length >= 4
+    ? values
+        .slice(0, 4)
+        .reduce((total, point) => total + point.value, 0)
+    : null;
+
 export function calculateDcfValuation(
   metrics: Record<string, AnalysisMetric>,
-  assumptions: DcfAssumptions = DEFAULT_DCF_ASSUMPTIONS,
 ): DcfValuation {
-  const model = calculateDcfFromMetrics(metrics, assumptions);
+  const dcf = parseDcfModule(metricObject(metrics, "fairValueModule"));
+  const growth = parseGrowthForecastModule(
+    metricObject(metrics, "growthForecastModule"),
+  );
+  const reported = points(growth.reported);
+  const forecast = points(growth.forecast);
+  const trailingFourQuarter = sumFour([...reported].reverse());
+  const forwardFourQuarter = sumFour(forecast);
+  const forwardGrowth =
+    trailingFourQuarter !== null &&
+    trailingFourQuarter > 0 &&
+    forwardFourQuarter !== null
+      ? forwardFourQuarter / trailingFourQuarter - 1
+      : null;
+  const providerValue = positiveNumber(dcf.fairValue);
   const price = positiveNumber(analysisMetricNumber(metrics, "price"));
-  const baseValue = model?.perShare ?? null;
+  const providerValuePeriod =
+    providerValue !== null && dcf.predicted[0]
+      ? yyyymmddToIso(dcf.predicted[0][0])
+      : null;
+
   return {
     kind: "dcf",
-    assumptions,
-    model,
-    ...valuationEnvelope(price, baseValue),
+    method: "ainvest-dcf",
+    providerValue,
+    providerValuePeriod,
+    providerValueAsOf: metricAsOf(metrics, "fairValueModule"),
+    cashFlow: {
+      reported,
+      forecast,
+      latestReported: reported.at(-1)?.value ?? null,
+      trailingFourQuarter,
+      nextForecast: forecast[0]?.value ?? null,
+      forwardFourQuarter,
+      forwardGrowth,
+    },
+    cashFlowAsOf: metricAsOf(metrics, "growthForecastModule"),
+    providerValuePeriods: dcf.predicted
+      .map(([period, value]) => ({ period: yyyymmddToIso(period), value }))
+      .sort((left, right) => left.period.localeCompare(right.period)),
+    ...valuationEnvelope(price, providerValue),
+    priceAsOf: metricAsOf(metrics, "price"),
     modelVersion: VALUATION_MODEL_VERSION,
   };
 }
@@ -357,7 +270,7 @@ export function calculateRelativeValuation(
   data: Pick<SecurityAnalysisResponse, "metrics" | "peers">,
 ): RelativeValuation {
   const measures = calculateRelativeMeasures(data);
-  const relativeValue = meanPositive(
+  const relativeValue = medianPositive(
     measures.map((measure) => measure.impliedValue),
   );
   const price = positiveNumber(analysisMetricNumber(data.metrics, "price"));
@@ -366,7 +279,13 @@ export function calculateRelativeValuation(
     measures,
     relativeValue,
     ...valuationEnvelope(price, relativeValue),
-    aggregation: "mean-positive-implied-values",
+    priceAsOf: metricAsOf(data.metrics, "price"),
+    peerAsOf: latestAsOf(
+      data.peers.flatMap((peer) =>
+        (["pe", "ps", "pb"] as const).map((key) => metricAsOf(peer.metrics, key)),
+      ),
+    ),
+    aggregation: "median-positive-implied-values",
     modelVersion: VALUATION_MODEL_VERSION,
   };
 }

@@ -33,6 +33,7 @@ import type {
 } from "@/lib/security/business-quality";
 import { normalizeSummary } from "../data";
 import ResearchPanelHeader from "../ResearchPanelHeader";
+import CalculationDisclosure from "../CalculationDisclosure";
 import {
   EarningsBridge,
   ProfitabilityTrendChart,
@@ -79,6 +80,9 @@ const signedPercent = (value: number | null) =>
   value === null || !Number.isFinite(value)
     ? "—"
     : `${value > 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
+
+const asOfDate = (value: string | null | undefined) =>
+  value ? value.slice(0, 10) : "Not supplied";
 
 const unwrapResponse = async (response: Response) => {
   const payload = await response.json().catch(() => null);
@@ -292,8 +296,43 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                 </Unavailable>
               )}
             </div>
-            <details className="profitability-inline-details">
-              <summary>How the score works</summary>
+            <CalculationDisclosure
+              title="How the score works"
+              summary="Score = round(100 × earned points ÷ available points)"
+              badges={[
+                `${analysis.scoreComponents.length} components used`,
+                `Policy v${quality.modelVersion}`,
+              ]}
+              formulas={[
+                {
+                  label: "Component",
+                  expression:
+                    "maximum points × clamp(metric / target, 0, 1)",
+                },
+                {
+                  label: "Overall score",
+                  expression:
+                    "round(100 × sum earned points / sum available maximum points)",
+                },
+                {
+                  label: "Labels",
+                  expression:
+                    "≥80 Exceptional; ≥65 Strong; ≥50 Resilient; ≥35 Mixed; otherwise Fragile",
+                },
+              ]}
+              items={[
+                {
+                  label: "Weights & targets",
+                  value:
+                    "Gross margin 10 pts @40%; operating margin 15 @20%; net margin 15 @15%; FCF margin 15 @12%; cash conversion 15 @100%; ROIC (or ROE fallback) 20 @15%; earnings consistency 10 @100%.",
+                },
+                {
+                  label: "Missing inputs",
+                  value:
+                    "Missing components are excluded and remaining weights are rescaled. A score needs at least three available components.",
+                },
+              ]}
+            >
               <ul>
                 {analysis.scoreComponents.map((component) => (
                   <li key={component.label}>
@@ -306,7 +345,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                   rescaled to 100.
                 </li>
               </ul>
-            </details>
+            </CalculationDisclosure>
           </section>
 
           <section
@@ -324,6 +363,17 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                 <DiligenceRow key={item.label} item={item} />
               ))}
             </div>
+            <CalculationDisclosure
+              title="Pass / watch rules"
+              summary="Positive profit · ≥80% conversion · ≥15% capital return · margin no worse than −2 pp"
+              formulas={[
+                { label: "Profitable", expression: "latest net margin > 0" },
+                { label: "Cash-backed", expression: "free cash flow / positive net income ≥ 0.80" },
+                { label: "Capital return", expression: "ROIC, otherwise ROE, ≥ 0.15" },
+                { label: "Margin direction", expression: "latest margin - preceding average ≥ -0.02" },
+                { label: "Consistency", expression: "positive usable annual net-income periods / usable periods = 1" },
+              ]}
+            />
           </section>
         </div>
 
@@ -448,6 +498,36 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               </div>
             </details>
           ) : null}
+          <CalculationDisclosure
+            title="Margin, trend, and growth methods"
+            summary="Margin = matching profit ÷ revenue · CAGR = (last ÷ first)^(1 ÷ years) − 1"
+            badges={[`Profitability feed ${asOfDate(profitability?.asOf)}`]}
+            formulas={[
+              { label: "Gross margin", expression: "provider ratio; otherwise gross profit / revenue" },
+              { label: "Operating margin", expression: "direct provider operating-margin ratio" },
+              { label: "Net margin", expression: "provider ratio; otherwise net income / revenue" },
+              { label: "FCF margin", expression: "provider ratio; otherwise free cash flow / revenue" },
+              { label: "Margin trend", expression: "current net margin - average of up to 3 preceding finite annual margins" },
+              { label: "CAGR", expression: "(last positive value / first positive value)^(1 / elapsed years) - 1" },
+            ]}
+            items={[
+              {
+                label: "Annual history",
+                value:
+                  "Up to six fiscal years are built only from years with exactly four returned fiscal periods and a year-end marker. A total is shown only when all four component values exist.",
+              },
+              {
+                label: "CAGR guards",
+                value:
+                  "At least two positive endpoints are required. Calendar-year distance is used when parseable; otherwise the number of usable intervals is used.",
+              },
+              {
+                label: "Asset turnover",
+                value:
+                  "A direct provider TTM ratio; the app does not reconstruct average assets when the provider value is missing.",
+              },
+            ]}
+          />
         </section>
 
         <section
@@ -465,6 +545,23 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
             analysis={analysis}
             currency={currency}
           />
+          <CalculationDisclosure
+            title="Bridge equations"
+            summary="Combined costs = net income − revenue · cash conversion step = free cash flow − net income"
+            formulas={[
+              { label: "Revenue", expression: "starting displayed TTM revenue" },
+              { label: "Combined costs", expression: "displayed net income - displayed revenue" },
+              { label: "Net income", expression: "revenue + combined costs" },
+              { label: "Cash step", expression: "displayed free cash flow - displayed net income" },
+            ]}
+            items={[
+              {
+                label: "Scope",
+                value:
+                  "This is a simplified bridge from displayed totals. Costs, interest, and tax are grouped together, and the cash step is not a full cash-flow statement reconciliation.",
+              },
+            ]}
+          />
         </section>
 
         <section
@@ -475,7 +572,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
             icon={<Scale aria-hidden="true" />}
             eyebrow="Peer economics"
             title="Margin and return comparison"
-            description="A screening comparison using positive market multiples."
+            description="A comparison using direct trailing-twelve-month profitability ratios from AInvest."
             id="peer-margin-heading"
           />
           {peerEconomics.length ? (
@@ -509,9 +606,9 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                       </th>
                       <td>{percent(analysis.netMargin)}</td>
                       <td>{percent(analysis.returnOnEquity)}</td>
-                      <td>Reported totals</td>
+                      <td>AInvest TTM</td>
                     </tr>
-                    {peerEconomics.slice(0, 6).map((peer) => (
+                    {peerEconomics.map((peer) => (
                       <tr key={peer.symbol}>
                         <th scope="row">
                           <strong>{peer.symbol}</strong>
@@ -519,7 +616,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                         </th>
                         <td>{percent(peer.netMargin)}</td>
                         <td>{percent(peer.returnOnEquity)}</td>
-                        <td>Multiple-implied</td>
+                        <td>AInvest TTM</td>
                       </tr>
                     ))}
                   </tbody>
@@ -529,18 +626,58 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                 className="profitability-method-note"
                 id="peer-method-note"
               >
-                Multiple-implied net margin equals P/S ÷ P/E; implied return on
-                equity equals P/B ÷ P/E. Only positive multiples are used.
-                Capital structures and accounting differences can distort the
-                comparison.
+                {quality.peerComparison.selectionReason ? (
+                  <>{quality.peerComparison.selectionReason} </>
+                ) : null}
+                Peer net margin and return on equity are direct
+                trailing-twelve-month ratios returned by AInvest. Missing
+                provider values remain blank; no profitability ratios are
+                inferred from valuation multiples. Capital structures and
+                accounting differences can still affect comparability.
               </p>
             </>
           ) : (
             <Unavailable>
-              Comparable multiples were not returned, so peer economics remain
-              blank.
+              Direct peer profitability ratios were not returned, so peer
+              economics remain blank.
             </Unavailable>
           )}
+          <CalculationDisclosure
+            title="Peer comparison method"
+            summary="Median of each direct TTM ratio when at least 3 peers have that ratio"
+            badges={[
+              `${peerEconomics.length} selected peers shown`,
+              `Response ${asOfDate(quality.asOf)}`,
+            ]}
+            formulas={[
+              {
+                label: "Peer median",
+                expression:
+                  "middle finite ratio after sorting; average the two middle ratios for an even count",
+              },
+              {
+                label: "Margin gap",
+                expression: "company net margin - peer median net margin",
+              },
+            ]}
+            items={[
+              {
+                label: "Eligible ratios",
+                value:
+                  "Peer medians include finite positive, zero, or negative profitability ratios. Missing values are excluded independently for net margin and ROE.",
+              },
+              {
+                label: "Peer set",
+                value:
+                  "Select up to eight closest issuers by the same industry-and-size policy used elsewhere. A broader sector fallback is allowed when fewer than three direct industry ratios are available.",
+              },
+              {
+                label: "Normalization",
+                value:
+                  "Company and peer TTM ratios use the same provider metadata-aware percent normalization before comparison.",
+              },
+            ]}
+          />
         </section>
 
         <section
@@ -588,6 +725,29 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               icon={<CircleDollarSign aria-hidden="true" />}
             />
           </div>
+          <CalculationDisclosure
+            title="Return calculations and provenance"
+            summary="Provider accounting returns · local cash return = free cash flow ÷ enterprise value"
+            formulas={[
+              { label: "ROE", expression: "provider TTM return on equity (conceptually net income / equity)" },
+              { label: "ROIC", expression: "provider TTM return on invested capital (conceptually NOPAT / invested capital)" },
+              { label: "ROA", expression: "provider TTM return on assets (conceptually net income / average assets)" },
+              { label: "Enterprise value", expression: "market capitalization + debt - cash" },
+              { label: "Cash return", expression: "free cash flow / positive enterprise value" },
+            ]}
+            items={[
+              {
+                label: "No reconstruction",
+                value:
+                  "The provider's accounting-return ratios are displayed directly because its exact balance-sheet averaging and NOPAT conventions are not included. Missing ratios stay blank.",
+              },
+              {
+                label: "Cash-return scope",
+                value:
+                  "The cash-return measure is locally calculated from displayed market cap, debt, cash, and free cash flow; it is a valuation yield, not ROIC.",
+              },
+            ]}
+          />
         </section>
 
         <section
@@ -616,7 +776,10 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                 aria-valuenow={
                   analysis.cashConversion === null
                     ? undefined
-                    : Math.round(analysis.cashConversion * 100)
+                    : Math.min(
+                        150,
+                        Math.max(0, Math.round(analysis.cashConversion * 100)),
+                      )
                 }
               >
                 <i
@@ -667,6 +830,29 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               />
             </div>
           </div>
+          <CalculationDisclosure
+            title="Cash conversion, yield, and leverage"
+            summary="Cash conversion = FCF ÷ positive net income · FCF yield = FCF ÷ market cap"
+            formulas={[
+              { label: "Cash conversion", expression: "free cash flow / net income, only when net income > 0" },
+              { label: "FCF yield", expression: "free cash flow / positive market capitalization" },
+              { label: "Earnings yield", expression: "1 / positive P/E" },
+              { label: "Net debt", expression: "debt - cash" },
+              { label: "Net debt / FCF", expression: "net debt / positive free cash flow" },
+            ]}
+            items={[
+              {
+                label: "Negative cash flow",
+                value:
+                  "A returned negative free-cash-flow value is valid evidence and produces a negative conversion ratio when net income is positive. It is not treated as missing.",
+              },
+              {
+                label: "Meter",
+                value:
+                  "The visual meter is clipped to 0%–150% for readability; the numeric conversion value remains un-clipped.",
+              },
+            ]}
+          />
         </section>
 
         <section
@@ -705,6 +891,25 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               </li>
             </ul>
           </div>
+          <CalculationDisclosure
+            title="How opportunity signals are assigned"
+            summary="Quality score + available yield + margin trend + net debt / FCF"
+            formulas={[
+              { label: "Chosen yield", expression: "FCF yield when available; otherwise earnings yield" },
+              { label: "Quality support", expression: "score ≥ 65 and chosen yield ≥ 4%" },
+              { label: "Quality recognized", expression: "score ≥ 65 and chosen yield < 4%" },
+              { label: "Yield watch", expression: "score < 65 and chosen yield ≥ 6%" },
+              { label: "Margin signal", expression: "≥ +2 pp expanding; ≤ −2 pp pressure; otherwise stable" },
+              { label: "Leverage signal", expression: "net debt / FCF ≤ 1.5× flexible; > 3× watch" },
+            ]}
+            items={[
+              {
+                label: "Output limit",
+                value:
+                  "The app returns the first three deterministic signals in policy order. They are diligence prompts, not probabilities, forecasts, or recommendations.",
+              },
+            ]}
+          />
         </section>
 
         <section

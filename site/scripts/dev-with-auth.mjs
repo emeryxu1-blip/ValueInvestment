@@ -1,50 +1,27 @@
 #!/usr/bin/env node
 
-import { chmod, readFile } from "node:fs/promises";
+import { chmod } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
-const authPath = resolve(projectRoot, "../skills/Cauth.json");
+const devVarsPath = resolve(projectRoot, ".dev.vars");
 const nextPath = resolve(projectRoot, "node_modules/.bin/next");
 
-let credentials = null;
 try {
-  credentials = JSON.parse(await readFile(authPath, "utf8"));
+  await chmod(devVarsPath, 0o600);
 } catch {
-  if (!process.env.AINVEST_C_COOKIE?.trim()) {
-    console.warn("Market-data credentials are unavailable; APIs will fail closed.");
-  }
+  // The ignored local secrets file is optional or may be read-only.
 }
 
-const validCredentials =
-  typeof credentials?.userid === "string" &&
-  credentials.userid.length > 0 &&
-  typeof credentials?.sessionid === "string" &&
-  credentials.sessionid.length > 0;
-
-if (credentials && !validCredentials) {
-  if (!process.env.AINVEST_C_COOKIE?.trim()) {
-    console.warn("Market-data credentials are incomplete; APIs will fail closed.");
-  }
+if (
+  !process.env.AINVEST_C_COOKIE?.trim() &&
+  !(process.env.AINVEST_EMAIL?.trim() && process.env.AINVEST_PASSWORD?.trim())
+) {
+  console.warn("Market-data credentials are unavailable; APIs will fail closed.");
 }
-
-// Best-effort hardening. The file is outside the site repository and is never
-// copied, logged, or serialized into an application response.
-if (validCredentials) {
-  try {
-    await chmod(authPath, 0o600);
-  } catch {
-    // A read-only filesystem can still run the app without weakening secrecy.
-  }
-}
-
-const cookie = validCredentials
-  ? `userid=${credentials.userid}; sessionid=${credentials.sessionid}`
-  : process.env.AINVEST_C_COOKIE?.trim() || null;
-credentials = undefined;
 
 const child = spawn(nextPath, ["dev", ...process.argv.slice(2)], {
   cwd: projectRoot,

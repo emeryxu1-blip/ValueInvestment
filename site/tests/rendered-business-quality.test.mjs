@@ -14,6 +14,8 @@ after(async () => {
 });
 
 const request = (pathname) => worker.request(pathname);
+const withoutCompanyLogoHost = (html) =>
+  html.replaceAll("https://cdn.ainvest.com", "");
 
 async function assertAppRedirect(response, pathname) {
   if (response.status === 307 || response.status === 308) {
@@ -41,6 +43,10 @@ function assertResearchShell(html, activePathname) {
   assert.match(
     html,
     /<h1>Microsoft(?:<!-- -->)? opportunity overview<\/h1>/i,
+  );
+  assert.match(
+    html,
+    /<img[^>]*src="https:\/\/cdn\.ainvest\.com\/icon\/us\/MSFT\.png"/i,
   );
 
   const navigation = html.match(
@@ -82,7 +88,7 @@ test("renders the business-quality shell without copied site chrome", async () =
   assert.match(html, /Loading[\s\S]*MSFT[\s\S]*business quality/);
   assert.match(html, /profitability-skeleton/);
   assert.doesNotMatch(
-    html,
+    withoutCompanyLogoHost(html),
     /AlphaSpread|Start free trial|paywall|AInvest|TradingView/i,
   );
   assert.doesNotMatch(html, /<footer\b/i);

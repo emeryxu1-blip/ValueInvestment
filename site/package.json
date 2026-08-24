@@ -6,7 +6,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "node scripts/dev-with-auth.mjs",
+    "dev": "node --env-file-if-exists=.dev.vars scripts/dev-with-auth.mjs",
     "build": "next build",
     "build:worker": "opennextjs-cloudflare build --config wrangler.jsonc",
     "preview": "opennextjs-cloudflare build --config wrangler.jsonc && opennextjs-cloudflare preview --config wrangler.jsonc",
@@ -44,6 +44,7 @@
     "eslint": "9.39.4",
     "eslint-config-next": "^16.2.11",
     "tailwindcss": "4.2.1",
+    "tsx": "4.22.1",
     "typescript": "5.9.3",
     "wrangler": "4.92.0"
   },

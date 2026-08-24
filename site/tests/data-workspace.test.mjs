@@ -13,10 +13,7 @@ import {
   serializeWorkspaceSessionCookie,
   WORKSPACE_SESSION_COOKIE,
 } from "../lib/workspace/session-cookie.ts";
-import {
-  journalWriteSchema,
-  savedScreenerWriteSchema,
-} from "../lib/workspace/validation.ts";
+import { savedScreenerWriteSchema } from "../lib/workspace/validation.ts";
 
 const validScreener = {
   name: "  Durable value  ",
@@ -34,26 +31,12 @@ const validScreener = {
   columns: ["price", "mispricing"],
   sortKey: "marketCap",
   sortOrder: "desc",
-  symbols: ["msft", "AAPL", "MSFT"],
 };
 
-test("validates bounded journal and saved-screener payloads", () => {
-  assert.deepEqual(journalWriteSchema.parse({}), {
-    note: "",
-    sentiment: "neutral",
-    watchPrice: null,
-  });
-  assert.throws(() =>
-    journalWriteSchema.parse({
-      note: "x".repeat(20_001),
-      sentiment: "bull",
-      watchPrice: null,
-    }),
-  );
-
+test("validates bounded saved-screener payloads", () => {
   const parsed = savedScreenerWriteSchema.parse(validScreener);
   assert.equal(parsed.name, "Durable value");
-  assert.deepEqual(parsed.symbols, ["MSFT", "AAPL"]);
+  assert.equal("symbols" in parsed, false);
   assert.throws(() =>
     savedScreenerWriteSchema.parse({
       ...validScreener,
@@ -61,10 +44,7 @@ test("validates bounded journal and saved-screener payloads", () => {
     }),
   );
   assert.throws(() =>
-    savedScreenerWriteSchema.parse({
-      ...validScreener,
-      symbols: ["../MSFT"],
-    }),
+    savedScreenerWriteSchema.parse({ ...validScreener, symbols: ["MSFT"] }),
   );
 });
 
