@@ -17,6 +17,10 @@ async function localSnapshotFallback(request: Request): Promise<Response | null>
     });
     if (!response.ok) return null;
     const headers = new Headers(response.headers);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+    headers.delete("age");
+    headers.delete("cf-cache-status");
     headers.set("Cache-Control", "no-store");
     return new Response(await response.arrayBuffer(), {
       status: response.status,
