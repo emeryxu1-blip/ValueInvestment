@@ -10,3 +10,4 @@ site/.wrangler/
 site/.env*
 site/.dev.vars*
 !site/.dev.vars.example
+site/.local/

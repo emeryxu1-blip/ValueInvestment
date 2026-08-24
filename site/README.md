@@ -81,31 +81,37 @@ npm run db:migrate:local
 npm run dev
 ```
 
-The local screener immediately uses the current production snapshot when the
-local D1 database has no active snapshot. The fallback is development-only,
-read-only, and returned with `Cache-Control: no-store`, so frontend and API code
-changes still appear immediately. Set `LOCAL_SNAPSHOT_SOURCE_URL` in `.dev.vars`
-only if you need to use a different trusted snapshot endpoint.
+The local screener uses a snapshot fixture at
+`.local/screener-snapshot.json`. `npm run dev` automatically downloads the
+current production snapshot into that ignored file on first startup, so a fresh
+clone can display screener data without a local D1 seed or private provider
+credentials. Refresh it at any time with:
 
-To regenerate the complete Top 1,000 snapshot into local D1 instead, run this in
-a second terminal:
+```bash
+npm run sync:snapshot
+```
+
+The fixture is read-only local application input and is never committed. The
+local and production APIs use the same compact snapshot contract and the same
+application filtering code; only their persistence differs.
+
+To regenerate a complete snapshot from AInvest into local D1 instead, run:
 
 ```bash
 npm run seed:local
 ```
 
-This optional local-only command uses the AInvest credentials in `.dev.vars`,
-writes only under `.wrangler/`, and does not affect production. It requires a
-working provider account and may take several minutes. An optional US trading
-date can be supplied for repeatable testing:
+That optional command uses `.dev.vars`, writes only under `.wrangler/`, and may
+take several minutes. An optional US trading date can be supplied for repeatable
+testing:
 
 ```bash
 npm run seed:local -- 2026-08-24
 ```
 
 Edit the application normally after startup; Next.js hot reload shows code and
-UI changes immediately. Re-run the seed only when you specifically need fresh
-local market data rather than the production snapshot fallback.
+UI changes immediately. Push to `main` to run validation and deploy the same
+source architecture to the live Worker.
 
 Open the printed local URL, then use:
 

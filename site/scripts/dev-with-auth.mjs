@@ -1,14 +1,28 @@
 #!/usr/bin/env node
 
-import { chmod } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { access, chmod } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
 const devVarsPath = resolve(projectRoot, ".dev.vars");
+const localSnapshotPath = resolve(projectRoot, ".local/screener-snapshot.json");
 const nextPath = resolve(projectRoot, "node_modules/.bin/next");
+
+try {
+  await access(localSnapshotPath);
+} catch {
+  const syncPath = resolve(projectRoot, "scripts/sync-local-snapshot.mjs");
+  const sync = spawnSync(process.execPath, ["--env-file-if-exists=.dev.vars", syncPath], {
+    cwd: projectRoot,
+    stdio: "inherit",
+  });
+  if (sync.status !== 0) {
+    console.warn("Local screener snapshot is unavailable; the screener will show an empty state until sync succeeds.");
+  }
+}
 
 try {
   await chmod(devVarsPath, 0o600);

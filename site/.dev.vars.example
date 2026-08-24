@@ -5,5 +5,9 @@
 AINVEST_EMAIL=your-account@example.com
 AINVEST_PASSWORD=replace-with-the-private-password
 
+# Optional: override public URLs for a fork or alternate deployment.
+# NEXT_PUBLIC_SITE_URL=http://localhost:3000
+# SCREENER_SNAPSHOT_SYNC_URL=https://your-worker.example.workers.dev/api/screener/snapshot?schema=3
+
 # Optional legacy fallback. Prefer the email/password pair above.
 # AINVEST_C_COOKIE=userid=replace-me; sessionid=replace-me
