@@ -27,7 +27,6 @@ const child = spawn(nextPath, ["dev", ...process.argv.slice(2)], {
   cwd: projectRoot,
   env: {
     ...process.env,
-    ...(cookie ? { AINVEST_C_COOKIE: cookie } : {}),
   },
   stdio: "inherit",
 });

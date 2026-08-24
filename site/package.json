@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "node --env-file-if-exists=.dev.vars scripts/dev-with-auth.mjs",
+    "seed:local": "node --env-file-if-exists=.dev.vars scripts/seed-local-screener.mjs",
     "build": "next build",
     "build:worker": "opennextjs-cloudflare build --config wrangler.jsonc",
     "preview": "opennextjs-cloudflare build --config wrangler.jsonc && opennextjs-cloudflare preview --config wrangler.jsonc",

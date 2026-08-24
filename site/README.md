@@ -81,6 +81,32 @@ npm run db:migrate:local
 npm run dev
 ```
 
+The local screener immediately uses the current production snapshot when the
+local D1 database has no active snapshot. The fallback is development-only,
+read-only, and returned with `Cache-Control: no-store`, so frontend and API code
+changes still appear immediately. Set `LOCAL_SNAPSHOT_SOURCE_URL` in `.dev.vars`
+only if you need to use a different trusted snapshot endpoint.
+
+To regenerate the complete Top 1,000 snapshot into local D1 instead, run this in
+a second terminal:
+
+```bash
+npm run seed:local
+```
+
+This optional local-only command uses the AInvest credentials in `.dev.vars`,
+writes only under `.wrangler/`, and does not affect production. It requires a
+working provider account and may take several minutes. An optional US trading
+date can be supplied for repeatable testing:
+
+```bash
+npm run seed:local -- 2026-08-24
+```
+
+Edit the application normally after startup; Next.js hot reload shows code and
+UI changes immediately. Re-run the seed only when you specifically need fresh
+local market data rather than the production snapshot fallback.
+
 Open the printed local URL, then use:
 
 - `/value-opportunities` for the screener
@@ -92,6 +118,28 @@ Open the printed local URL, then use:
   server-computed quality model
 
 Local D1 state is kept under `.wrangler/` and is ignored by Git.
+
+## Automatic deployment from GitHub
+
+Every push to `main` runs the test suite and deploys the Worker through
+[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). Configure these
+GitHub Actions repository secrets once:
+
+- `CLOUDFLARE_API_TOKEN` — a scoped Cloudflare API token with Workers Scripts,
+  Workers Routes, D1, and account access needed by this project
+- `CLOUDFLARE_ACCOUNT_ID` — the Cloudflare account ID that owns the Worker and D1
+
+Production AInvest credentials remain Cloudflare Worker secrets and are not put
+in GitHub Actions, source control, or `.dev.vars`. Set them once with Wrangler:
+
+```bash
+npx wrangler secret put AINVEST_EMAIL
+npx wrangler secret put AINVEST_PASSWORD
+```
+
+After that, collaborators can work locally, push a reviewed change to `main`,
+and GitHub Actions will run validation, apply migrations, and deploy the live
+Worker. The workflow intentionally deploys only the `main` branch.
 
 ## Cloudflare deployment
 
