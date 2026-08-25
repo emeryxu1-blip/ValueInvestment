@@ -51,6 +51,12 @@ const worker = {
     env: CloudflareEnv,
     ctx: ExecutionContext,
   ): Promise<Response> {
+    // OpenNext's shared AInvest adapter reads server-only credentials from
+    // process.env. Populate them from Worker bindings for request-time APIs;
+    // never expose or serialize these values in a response.
+    process.env.AINVEST_EMAIL = env.AINVEST_EMAIL;
+    process.env.AINVEST_PASSWORD = env.AINVEST_PASSWORD;
+
     const limited = await rateLimitResponse(request, env);
     if (limited) return limited;
     const url = new URL(request.url);
