@@ -29,6 +29,9 @@ import { buildCashFlowBridge } from "./bridges";
 import { getPeersResponse, unavailablePeersResponse } from "./peers";
 import { companyAnalysisApplicability } from "./company-analysis-applicability.ts";
 import { positiveNumber } from "./valuation.ts";
+import { fallbackSecuritySummary } from "./fallback-summary.ts";
+import { snapshotRowForSecurity } from "./screener-fallback.ts";
+import type { ScreenerClientSnapshotPayload } from "../screener/client-snapshot-contract.ts";
 
 function unavailable<T>(reason: string, unit?: string): Metric<T> {
   return metric<T>(null, "derived", { reason, unit });
@@ -125,11 +128,27 @@ function metricNarrative(options: {
 
 export async function getSecuritySummary(
   resolved: ResolvedSecurity,
+  options: { fallbackSnapshot?: ScreenerClientSnapshotPayload } = {},
 ): Promise<SecuritySummaryResponse> {
-  const payload = await fetchAInvest(
-    "snapshot",
-    buildSecuritySnapshotRequest(resolved.marketCode),
-  );
+  let payload: unknown;
+  try {
+    payload = await fetchAInvest(
+      "snapshot",
+      buildSecuritySnapshotRequest(resolved.marketCode),
+    );
+  } catch (error) {
+    const fallbackRow = options.fallbackSnapshot
+      ? snapshotRowForSecurity(options.fallbackSnapshot, resolved)
+      : null;
+    if (fallbackRow) {
+      return fallbackSecuritySummary(
+        resolved,
+        fallbackRow,
+        options.fallbackSnapshot?.asOf ?? new Date().toISOString(),
+      );
+    }
+    throw error;
+  }
   const row = normalizeSnapshot(payload).rows[0];
   if (!row) throw new Error("The market data service returned no security row.");
 
