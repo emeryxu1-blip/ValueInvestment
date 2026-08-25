@@ -82,15 +82,11 @@ function financialPeriodsFromSeries(payload: unknown): {
 }
 
 async function fetchFinancials(resolved: ResolvedSecurity) {
-  try {
-    const payload = await fetchAInvest(
-      "series",
-      buildSeriesRequest(resolved.marketCode, "financials", "5y"),
-    );
-    return financialPeriodsFromSeries(payload);
-  } catch {
-    return { annual: [], quarterly: [] };
-  }
+  const payload = await fetchAInvest(
+    "series",
+    buildSeriesRequest(resolved.marketCode, "financials", "5y"),
+  );
+  return financialPeriodsFromSeries(payload);
 }
 
 function metricNarrative(options: {
@@ -142,12 +138,7 @@ export async function getSecuritySummary(
   const companyAnalysisReason = applicability.reason;
   const [peers, seriesFinancials] = await Promise.all([
     companyAnalysisSupported
-      ? getPeersResponse(resolved, row).catch(() =>
-          unavailablePeersResponse(
-            resolved,
-            "Peer data is temporarily unavailable.",
-          ),
-        )
+      ? getPeersResponse(resolved, row)
       : Promise.resolve(
           unavailablePeersResponse(resolved, companyAnalysisReason!),
         ),

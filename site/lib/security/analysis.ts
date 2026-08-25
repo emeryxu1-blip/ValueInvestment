@@ -86,10 +86,7 @@ async function getRelativePeers(
   const industryCode = stringValue(row, "sectorCode");
   const sectorGroupCode = stringValue(row, "sectorGroupCode");
   if (!industryCode && !sectorGroupCode) {
-    return {
-      peers: [],
-      peerReason: "No supported industry relationship was returned.",
-    };
+    throw new Error("No supported industry relationship was returned.");
   }
   const primaryCodes = industryCode
     ? await relatedMarketCodes(resolved, industryCode)
@@ -122,16 +119,15 @@ async function getRelativePeers(
         ]
       : []),
   ];
-  return selectedRows.length > 0
-    ? {
-        peers: selectedRows.map(peerFromRow),
-        ...(reasons.length > 0 ? { peerReason: reasons.join(" ") } : {}),
-      }
-    : {
-        peers: [],
-        peerReason:
-          "No peers met the minimum valuation coverage and market-cap comparability rules.",
-      };
+  if (selectedRows.length === 0) {
+    throw new Error(
+      "No peers met the minimum valuation coverage and market-cap comparability rules.",
+    );
+  }
+  return {
+    peers: selectedRows.map(peerFromRow),
+    ...(reasons.length > 0 ? { peerReason: reasons.join(" ") } : {}),
+  };
 }
 
 export async function getSecurityAnalysis(
@@ -152,7 +148,7 @@ export async function getSecurityAnalysis(
   const peerResult =
     view === "relative-valuation"
       ? await getRelativePeers(resolved, row)
-      : { peers: [] };
+      : { peers: [] as AnalysisPeer[] };
   const asOf =
     Object.values(row.values)
       .map((value) => value.asOf)

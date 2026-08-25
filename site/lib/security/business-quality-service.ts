@@ -7,7 +7,7 @@ import {
   medianFinite,
 } from "./business-quality";
 import { getSecurityAnalysis } from "./analysis";
-import { getPeersResponse, unavailablePeersResponse } from "./peers";
+import { getPeersResponse } from "./peers";
 import { normalizeProfitabilitySnapshot } from "./profitability";
 import { getSecuritySummary } from "./service";
 import { MINIMUM_PEER_SAMPLE } from "./peer-selection.ts";
@@ -25,12 +25,7 @@ export async function getBusinessQualityResponse(
   }
   const [profitabilityPayload, peers] = await Promise.all([
     getSecurityAnalysis(resolved, "profitability"),
-    getPeersResponse(resolved, undefined, "quality").catch(() =>
-      unavailablePeersResponse(
-        resolved,
-        "Direct peer profitability data is temporarily unavailable.",
-      ),
-    ),
+    getPeersResponse(resolved, undefined, "quality"),
   ]);
   const profitability = normalizeProfitabilitySnapshot(
     profitabilityPayload,

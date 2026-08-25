@@ -25,24 +25,6 @@ const LABELS: Record<string, { label: string; unit: string }> = {
   netIncome: { label: "Net income", unit: "USD" },
 };
 
-function emptySeries(
-  resolved: ResolvedSecurity,
-  group: string,
-  range: string,
-  reason: string,
-): SeriesResponse {
-  return {
-    symbol: resolved.symbol,
-    marketCode: resolved.marketCode,
-    group,
-    range,
-    series: [],
-    source: "live",
-    asOf: new Date().toISOString(),
-    reason,
-  };
-}
-
 async function getValuationSeries(
   resolved: ResolvedSecurity,
   range: string,
@@ -62,12 +44,7 @@ async function getValuationSeries(
   const limit = pointsForRange(range);
   const history = dcf.history.slice(-limit);
   if (history.length === 0 && dcf.predicted.length === 0) {
-    return emptySeries(
-      resolved,
-      "valuation",
-      range,
-      "No supported valuation series was returned.",
-    );
+    throw new Error("No supported valuation series was returned.");
   }
   return {
     symbol: resolved.symbol,
@@ -108,12 +85,7 @@ async function getPriceSeries(
   );
   const points = normalizeKline(payload)[0]?.points ?? [];
   if (points.length === 0) {
-    return emptySeries(
-      resolved,
-      "price",
-      range,
-      "No supported price series was returned.",
-    );
+    throw new Error("No supported price series was returned.");
   }
   return {
     symbol: resolved.symbol,
@@ -152,12 +124,7 @@ async function getFinancialSeries(
     objectValue(normalized.rows[0], "earningsRevenueModule"),
   );
   if (financials.quarterly.length === 0) {
-    return emptySeries(
-      resolved,
-      "financials",
-      range,
-      "No supported financial series was returned.",
-    );
+    throw new Error("No supported financial series was returned.");
   }
   return {
     symbol: resolved.symbol,
@@ -203,12 +170,7 @@ export async function getSeriesResponse(
     points: value.points,
   }));
   if (series.length === 0 || series.every((item) => item.points.length === 0)) {
-    return emptySeries(
-      resolved,
-      group,
-      range,
-      "No supported series was returned.",
-    );
+    throw new Error("No supported series was returned.");
   }
   return {
     symbol: resolved.symbol,

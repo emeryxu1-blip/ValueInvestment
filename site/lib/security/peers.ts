@@ -139,10 +139,7 @@ export async function getPeersResponse(
   const industryCode = stringValue(target, "sectorCode");
   const sectorGroupCode = stringValue(target, "sectorGroupCode");
   if (!industryCode && !sectorGroupCode) {
-    return unavailablePeersResponse(
-      resolved,
-      "A supported industry relationship was not returned.",
-    );
+    throw new Error("A supported industry relationship was not returned.");
   }
   const primaryCodes = industryCode
     ? await relatedMarketCodes(resolved, industryCode)
@@ -163,7 +160,7 @@ export async function getPeersResponse(
     selectedRows = selectComparablePeerRows(target, candidateRows, 8, purpose);
   }
   if (selectedRows.length === 0) {
-    return unavailablePeersResponse(resolved, "No supported comparable peers were returned.");
+    throw new Error("No supported comparable peers were returned.");
   }
   const fetchedAt = new Date().toISOString();
   const peers = selectedRows.map((row) => peerFromRow(row, fetchedAt));
