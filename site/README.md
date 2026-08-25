@@ -276,6 +276,7 @@ source metrics.
   saved valuation runs are not persisted unless a future “Save model” feature
   stores normalized inputs, provenance, and a model version.
 - Anonymous workspaces cannot be recovered or synchronized across devices.
-- Automated upstream sign-in depends on AInvest's private web-login contract;
-  provider availability, data-use, and redistribution rights remain launch
-  gates.
+- AInvest's private email/password endpoint requires an interactive
+  email-certification value that the Worker cannot obtain reliably. Production
+  therefore uses manually rotated C-side session identifiers; provider
+  availability, data-use, and redistribution rights remain launch gates.

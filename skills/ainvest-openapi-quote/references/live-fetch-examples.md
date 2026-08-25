@@ -11,6 +11,7 @@ Live fetches in this skill use:
 - sandbox auth header: `Authorization: Bearer <AIME_API_KEY>`
 - B-side auth header: caller-provided `apikey`
 - C-side auth header: `Cookie: userid=<caller-provided-userid>; sessionid=<caller-provided-sessionid>`
+- C-side email/password login is not automated; the private account endpoint requires an interactive email-certification value.
 
 If the selected scene auth value is unavailable, do not present these examples as if the skill has already fetched live data. Fall back to request construction only.
 

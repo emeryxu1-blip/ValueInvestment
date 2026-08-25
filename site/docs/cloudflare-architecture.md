@@ -279,9 +279,10 @@ deploying it.
   is intentionally permissive and local. Replace the coarse IP key with an
   authenticated account or Cloudflare Access identity if the product gains an
   identity model.
-- Monitor upstream timeouts, rejected sign-ins, D1 errors, and scan freshness.
-  AInvest risk challenges such as CAPTCHA cannot be completed inside a Worker;
-  authentication fails closed without repeatedly attempting the password.
+- Monitor upstream timeouts, rejected sessions, D1 errors, and scan freshness.
+  AInvest's private login endpoint now requires an interactive email-certification
+  value, so the Worker uses manually rotated session identifiers and fails closed
+  rather than attempting password sign-in.
 - Verify the market-data provider's terms, licensing, attribution, caching, and
   redistribution requirements before launch. The technical secret boundary
   does not grant data-use rights.

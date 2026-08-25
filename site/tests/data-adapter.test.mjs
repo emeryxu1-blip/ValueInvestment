@@ -68,6 +68,22 @@ test("sends C-side authentication and program headers without serializing the co
   );
 });
 
+test("rejects visitor-style and injected manual session identifiers", async () => {
+  for (const values of [
+    { AINVEST_USERID: "mt_visitor", AINVEST_SESSIONID: "account-session" },
+    { AINVEST_USERID: "account-user", AINVEST_SESSIONID: "mt_visitor" },
+    { AINVEST_USERID: "account-user;bad", AINVEST_SESSIONID: "account-session" },
+    { AINVEST_USERID: "account-user", AINVEST_SESSIONID: "account-session\\nInjected" },
+  ]) {
+    await withAuthEnvironment(values, async () => {
+      await assert.rejects(
+        () => fetchAInvest("snapshot", {}),
+        (error) => error instanceof AInvestError && error.kind === "auth",
+      );
+    });
+  }
+});
+
 test("fails closed when the server-only cookie is missing", async () => {
   await withAuthEnvironment({}, async () => {
     await assert.rejects(

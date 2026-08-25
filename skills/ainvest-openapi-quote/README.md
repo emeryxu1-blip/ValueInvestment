@@ -4,7 +4,7 @@
 
 - 沙盒 Aime Claw 场景：使用环境变量 `AIME_API_KEY` 生成 `Authorization: Bearer <AIME_API_KEY>`。
 - B 端场景：使用调用方提供的 `apikey`。
-- C 端场景：使用调用方提供的 `userid` 和 `sessionid` 构造 `Cookie`。
+- C 端场景：使用调用方提供的 `userid` 和 `sessionid` 构造 `Cookie`；不尝试 email/password 登录。
 
 支持的 endpoint：
 
@@ -46,7 +46,7 @@ B 端 apikey 按应用区分，不能默认复用：
 - 查询生成后的指标索引，找到 `indicator_id`、endpoint、模板名和 attrs。
 - 按业务规则组织 request body。
 - 解释响应结构、空值语义和缺失数据风险。
-- 在认证信息可用时直接发起请求；认证缺失时只生成可执行请求体。
+- 在认证信息可用时直接发起请求；认证缺失时只生成可执行请求体。C 端不自动执行 email/password 登录，因为当前私有登录接口要求交互式 email-certification 值。
 
 在对应场景的认证信息可用时，这个 skill 也可以直接用于取数，而不只是生成请求体。只有沙盒 Aime Claw 场景从环境变量读取认证信息；B 端和 C 端必须由调用方或当前对话上下文提供认证值。
 

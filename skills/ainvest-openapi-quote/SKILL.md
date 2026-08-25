@@ -276,7 +276,7 @@ Use the JSON files in `assets/request-templates/` as starting points for the mai
 
 ## Scripts
 
-- `scripts/fetch_quote.py`: execute one quote request from a template or JSON body. Supports `--scene sandbox|b|c`; sandbox uses `AIME_API_KEY`, B-side accepts `--index-api-apikey` or `--quoteag-apikey`, and C-side requires caller-provided `--auth-value` unless `--dry-run` is used.
+- `scripts/fetch_quote.py`: execute one quote request from a template or JSON body. Supports `--scene sandbox|b|c`; sandbox uses `AIME_API_KEY`, B-side accepts `--index-api-apikey` or `--quoteag-apikey`, and C-side requires `--userid` plus `--sessionid` (or an explicitly supplied complete Cookie via `--auth-value`).
 - `scripts/export_indicators.py`: check freshness with `--status`, export the current AInvest-supported Tangram indicator workbook to `references/generated/export_metric_meta_new.xlsx`, and rebuild generated lookup CSVs with `--rebuild-csvs`.
 - `scripts/build_quote_csvs.py`: build `id_dict_quote.csv` and `quote_request_lookup.csv` from the exported metric metadata workbook.
 - `scripts/find_quote_params.py`: search generated request parameters by metric id, source code, Chinese name, or English name.

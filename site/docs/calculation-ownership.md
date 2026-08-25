@@ -176,11 +176,13 @@ import, it removes those legacy keys.
    feature and preserve normalized inputs, provenance, and model version.
 3. **Anonymous workspaces are device-cookie scoped.** Clearing the cookie loses
    the lookup key, and there is no account recovery or cross-device sync.
-4. **Upstream web authentication remains operationally brittle.** The server
-   now renews rejected AInvest sessions automatically from Worker secrets, but
-   the provider's private login contract or risk controls can change. Login
-   secrets and session cookies must never be exposed to browser JavaScript or
-   committed configuration.
+4. **Upstream web authentication requires manual session rotation.** The server
+    does not automate or retry AInvest password login. AInvest's private endpoint
+    requires an interactive email-certification value that this server-side flow
+    cannot obtain reliably. The application constructs the C-side cookie from
+    manually configured Worker secrets. Rotate both identifiers together when
+    the provider rejects the session. Session values must never be exposed to
+    browser JavaScript or committed configuration.
 5. **Provider rights remain a launch gate.** Verify the source provider's
    licensing, attribution, caching, and redistribution terms before exposing
    its data in production. Keeping a credential server-side is necessary for

@@ -62,8 +62,8 @@ When the user wants actual quote or relation data instead of only a request body
 
 1. Choose the scene from user context.
 2. For sandbox, check whether `AIME_API_KEY` is available.
-3. For B-side or C-side, extract the caller-provided apikey or Cookie from the current request/context. For B-side, choose the apikey by endpoint family: `index-api` for indicator and relation endpoints and `quoteag` for quote endpoints.
-4. For C-side, require both caller-provided userid and sessionid; construct the Cookie header server-side.
+3. For B-side, extract the caller-provided apikey from the current request/context and choose it by endpoint family: `index-api` for indicator and relation endpoints and `quoteag` for quote endpoints.
+4. For C-side, require both caller-provided userid and sessionid; construct the Cookie header server-side. Do not attempt email/password login; the private account endpoint requires an interactive email-certification value.
 5. If auth is available, construct the request and call the API directly.
 6. Compose the scene-specific auth header.
 7. If auth is missing, do not claim a live fetch succeeded; fall back to request construction and explain the missing credential.

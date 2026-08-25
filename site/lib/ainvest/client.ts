@@ -34,7 +34,17 @@ export class AInvestError extends Error {
 export function getAInvestCookie(): string | null {
   const userid = process.env.AINVEST_USERID?.trim();
   const sessionid = process.env.AINVEST_SESSIONID?.trim();
-  return userid && sessionid ? `userid=${userid}; sessionid=${sessionid}` : null;
+  if (
+    !userid ||
+    !sessionid ||
+    userid.startsWith("mt_") ||
+    sessionid.startsWith("mt_") ||
+    /[;\r\n]/.test(userid) ||
+    /[;\r\n]/.test(sessionid)
+  ) {
+    return null;
+  }
+  return `userid=${userid}; sessionid=${sessionid}`;
 }
 
 export function hasAInvestAuth(): boolean {
