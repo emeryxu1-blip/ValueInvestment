@@ -37,9 +37,8 @@ after(async () => {
 });
 
 const AUTH_ENV_KEYS = [
-  "AINVEST_C_COOKIE",
-  "AINVEST_EMAIL",
-  "AINVEST_PASSWORD",
+  "AINVEST_USERID",
+  "AINVEST_SESSIONID",
 ];
 
 const query = {
@@ -312,7 +311,8 @@ async function withScreenerTestEnvironment(callback) {
     AUTH_ENV_KEYS.map((key) => [key, process.env[key]]),
   );
   for (const key of AUTH_ENV_KEYS) delete process.env[key];
-  process.env.AINVEST_C_COOKIE = "userid=unit; sessionid=unit";
+  process.env.AINVEST_USERID = "unit";
+  process.env.AINVEST_SESSIONID = "unit";
   resetScreenerCacheForTests();
   resetUniverseInitializationForTests();
   __resetAInvestAuthForTests();

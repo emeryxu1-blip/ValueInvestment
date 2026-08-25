@@ -2,12 +2,11 @@
 # .dev.vars is the only local environment/secrets file used by this project.
 # Keep it private and share it out-of-band with trusted contributors only.
 
-AINVEST_EMAIL=your-account@example.com
-AINVEST_PASSWORD=replace-with-the-private-password
+# Obtain these two values from an authenticated AInvest browser session.
+# Keep them private and rotate them when AInvest invalidates the session.
+AINVEST_USERID=replace-with-account-userid
+AINVEST_SESSIONID=replace-with-account-sessionid
 
 # Optional: override public URLs for a fork or alternate deployment.
 # NEXT_PUBLIC_SITE_URL=http://localhost:3000
 # SCREENER_SNAPSHOT_SYNC_URL=https://your-worker.example.workers.dev/api/screener/snapshot?schema=3
-
-# Optional legacy fallback. Prefer the email/password pair above.
-# AINVEST_C_COOKIE=userid=replace-me; sessionid=replace-me

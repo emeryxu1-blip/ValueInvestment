@@ -332,8 +332,10 @@ test("renders renamed valuation routes without copied global chrome", async () =
 });
 
 test("fails closed without credentials and never serializes provider details", async () => {
-  const previousCookie = process.env.AINVEST_C_COOKIE;
-  delete process.env.AINVEST_C_COOKIE;
+  const previousUserid = process.env.AINVEST_USERID;
+  const previousSessionid = process.env.AINVEST_SESSIONID;
+  delete process.env.AINVEST_USERID;
+  delete process.env.AINVEST_SESSIONID;
   try {
     const summaryResponse = await request(
       "/api/security/nasdaq/msft/summary",
@@ -343,7 +345,7 @@ test("fails closed without credentials and never serializes provider details", a
     const summaryText = await summaryResponse.text();
     assert.doesNotMatch(
       summaryText,
-      /userid=|sessionid=|AINVEST_C_COOKIE|AInvest|demo|illustrative/i,
+      /userid=|sessionid=|AINVEST_USERID|AINVEST_SESSIONID|AInvest|demo|illustrative/i,
     );
 
     const screenerResponse = await request(
@@ -354,11 +356,13 @@ test("fails closed without credentials and never serializes provider details", a
     const screenerText = await screenerResponse.text();
     assert.doesNotMatch(
       screenerText,
-      /userid=|sessionid=|AINVEST_C_COOKIE|AInvest|demo|illustrative/i,
+      /userid=|sessionid=|AINVEST_USERID|AINVEST_SESSIONID|AInvest|demo|illustrative/i,
     );
   } finally {
-    if (previousCookie == null) delete process.env.AINVEST_C_COOKIE;
-    else process.env.AINVEST_C_COOKIE = previousCookie;
+    if (previousUserid == null) delete process.env.AINVEST_USERID;
+    else process.env.AINVEST_USERID = previousUserid;
+    if (previousSessionid == null) delete process.env.AINVEST_SESSIONID;
+    else process.env.AINVEST_SESSIONID = previousSessionid;
   }
 });
 
@@ -418,8 +422,10 @@ test("validates analysis views and supported symbols before requesting data", as
 });
 
 test("analysis API fails closed without credentials or provider details", async () => {
-  const previousCookie = process.env.AINVEST_C_COOKIE;
-  delete process.env.AINVEST_C_COOKIE;
+  const previousUserid = process.env.AINVEST_USERID;
+  const previousSessionid = process.env.AINVEST_SESSIONID;
+  delete process.env.AINVEST_USERID;
+  delete process.env.AINVEST_SESSIONID;
   try {
     const response = await request(
       "/api/security/nasdaq/msft/analysis?view=dcf-valuation",
@@ -430,10 +436,12 @@ test("analysis API fails closed without credentials or provider details", async 
     assert.match(text, /Market data is temporarily unavailable/);
     assert.doesNotMatch(
       text,
-      /userid=|sessionid=|AINVEST_C_COOKIE|AInvest|cookie|credential|demo|illustrative/i,
+      /userid=|sessionid=|AINVEST_USERID|AINVEST_SESSIONID|AInvest|cookie|credential|demo|illustrative/i,
     );
   } finally {
-    if (previousCookie == null) delete process.env.AINVEST_C_COOKIE;
-    else process.env.AINVEST_C_COOKIE = previousCookie;
+    if (previousUserid == null) delete process.env.AINVEST_USERID;
+    else process.env.AINVEST_USERID = previousUserid;
+    if (previousSessionid == null) delete process.env.AINVEST_SESSIONID;
+    else process.env.AINVEST_SESSIONID = previousSessionid;
   }
 });

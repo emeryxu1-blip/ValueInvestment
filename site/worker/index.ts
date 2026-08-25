@@ -51,11 +51,11 @@ const worker = {
     env: CloudflareEnv,
     ctx: ExecutionContext,
   ): Promise<Response> {
-    // OpenNext's shared AInvest adapter reads server-only credentials from
+    // OpenNext's shared AInvest adapter reads server-only session values from
     // process.env. Populate them from Worker bindings for request-time APIs;
     // never expose or serialize these values in a response.
-    process.env.AINVEST_EMAIL = env.AINVEST_EMAIL;
-    process.env.AINVEST_PASSWORD = env.AINVEST_PASSWORD;
+    process.env.AINVEST_USERID = env.AINVEST_USERID;
+    process.env.AINVEST_SESSIONID = env.AINVEST_SESSIONID;
 
     const limited = await rateLimitResponse(request, env);
     if (limited) return limited;
@@ -94,8 +94,8 @@ const worker = {
       );
     }
     if (tradingDate || controller.cron === TOP_MARKET_CAP_REFRESH_CRON) {
-      process.env.AINVEST_EMAIL = env.AINVEST_EMAIL;
-      process.env.AINVEST_PASSWORD = env.AINVEST_PASSWORD;
+      process.env.AINVEST_USERID = env.AINVEST_USERID;
+      process.env.AINVEST_SESSIONID = env.AINVEST_SESSIONID;
     }
     if (tradingDate) {
       tasks.push(

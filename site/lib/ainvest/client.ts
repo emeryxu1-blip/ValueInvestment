@@ -32,8 +32,9 @@ export class AInvestError extends Error {
 }
 
 export function getAInvestCookie(): string | null {
-  const value = process.env.AINVEST_C_COOKIE?.trim();
-  return value ? value : null;
+  const userid = process.env.AINVEST_USERID?.trim();
+  const sessionid = process.env.AINVEST_SESSIONID?.trim();
+  return userid && sessionid ? `userid=${userid}; sessionid=${sessionid}` : null;
 }
 
 export function hasAInvestAuth(): boolean {
@@ -153,9 +154,9 @@ export async function fetchAInvest<T = unknown>(
 
   const resolveCookie = async () => {
     try {
-      return await resolveAInvestCookie({ fetcher, signal });
+      return await resolveAInvestCookie({ signal });
     } catch {
-      throw new AInvestError("AInvest authentication is unavailable.", {
+      throw new AInvestError("AInvest authentication is unavailable; rotate the manually configured userid/sessionid session.", {
         kind: "auth",
         status: 401,
       });
@@ -163,23 +164,14 @@ export async function fetchAInvest<T = unknown>(
   };
 
   try {
-    let cookie = await resolveCookie();
+    const cookie = await resolveCookie();
     try {
       return await requestAInvest<T>(endpoint, body, cookie, fetcher, signal);
     } catch (error) {
-      if (!(error instanceof AInvestError) || error.kind !== "auth") {
-        throw error;
+      if (error instanceof AInvestError && error.kind === "auth") {
+        invalidateAInvestCookie(cookie);
       }
-      invalidateAInvestCookie(cookie);
-      cookie = await resolveCookie();
-      try {
-        return await requestAInvest<T>(endpoint, body, cookie, fetcher, signal);
-      } catch (retryError) {
-        if (retryError instanceof AInvestError && retryError.kind === "auth") {
-          invalidateAInvestCookie(cookie);
-        }
-        throw retryError;
-      }
+      throw error;
     }
   } finally {
     clearTimeout(timeout);

@@ -40,7 +40,7 @@ flowchart LR
     EdgeCache[("Workers Cache API\ncompact screener payload")]
     D1[("Cloudflare D1\nsaved-screen workspace, Top 1,000 universe,\ndaily run ledger, and screener snapshots")]
     Market["Upstream market-data APIs"]
-    Secret["Worker secrets\nAINVEST_EMAIL and AINVEST_PASSWORD"]
+    Secret["Worker secrets\nAINVEST_USERID and AINVEST_SESSIONID"]
 
     Browser --> Worker
     Worker --> EdgeCache
@@ -65,7 +65,7 @@ simple and allows mutation routes to reject cross-origin requests.
 | API | Next.js route handlers | Security summary, series, peers, valuation analysis, business quality, screener, and saved-screener workspace CRUD |
 | Database | Cloudflare D1 with Drizzle ORM | Anonymous sessions, saved screener definitions, the monthly Top 1,000 universe, immutable screener generations, and the per-trading-date execution ledger |
 | Schema migrations | Drizzle SQL applied by Wrangler | Repeatable local and remote D1 setup |
-| Market data | Server-side `fetch` from the Worker | Retrieves, caches, and renews the upstream session without exposing it to the browser |
+| Market data | Server-side `fetch` from the Worker | Sends a manually rotated upstream session without exposing it to the browser |
 
 The relevant project configuration is:
 
@@ -107,11 +107,10 @@ is relevant only to the split alternative described below.
 2. The custom Worker wrapper applies coarse per-client-IP limits to the public
    security and screener API families, then delegates to OpenNext.
 3. The route handler validates the exchange, symbol, query, and filter inputs.
-4. Security-analysis routes use an isolate-local cached AInvest session. If no session is
-   available, it signs in with the `AINVEST_EMAIL` and `AINVEST_PASSWORD`
-   Worker secrets.
-5. If AInvest rejects the session as expired, the server invalidates only that
-   session, deduplicates concurrent sign-ins, and retries the data request once.
+4. Security-analysis routes use the server-only `AINVEST_USERID` and
+   `AINVEST_SESSIONID` Worker secrets to construct the C-side AInvest cookie.
+5. If AInvest rejects the session as expired, the server invalidates that session
+   and fails closed; an operator must manually rotate both secrets.
 6. For `/api/screener/snapshot`, the Worker first checks its five-minute Cache
    API entry. On a miss, the route reads one active generation record from D1
    and returns its validated compact JSON with a stable ETag. Successful
@@ -221,18 +220,17 @@ requires:
    npm run db:migrate:remote
    ```
 
-3. Add the upstream credentials as Worker secrets:
+3. Add the manually acquired upstream session identifiers as Worker secrets:
 
    ```bash
-   npx wrangler secret put AINVEST_EMAIL
-   npx wrangler secret put AINVEST_PASSWORD
+   npx wrangler secret put AINVEST_USERID
+   npx wrangler secret put AINVEST_SESSIONID
    ```
 
    Use a
    [Worker secret](https://developers.cloudflare.com/workers/configuration/secrets/),
-   not a plaintext `vars` value or a browser environment variable. Remove the
-   legacy `AINVEST_C_COOKIE` secret after migration; it is accepted only by
-   cookie-only deployments that do not configure the credential pair.
+   not a plaintext `vars` value or a browser environment variable. Rotate both
+   values together when AInvest rejects the session.
 
 4. Build and verify the Worker locally:
 
@@ -258,9 +256,11 @@ npm run db:migrate:local
 npm run dev
 ```
 
-Store `AINVEST_EMAIL` and `AINVEST_PASSWORD` in the ignored `.dev.vars` file.
+Store `AINVEST_USERID` and `AINVEST_SESSIONID` in the ignored `.dev.vars` file.
 Do not use `.env.local` for these values: OpenNext compiles `.env*` values into
-its Worker output during a production build.
+its Worker output during a production build. The application does not automate
+email/password login because AInvest requires an interactive email-certification
+step.
 
 `npm run build` creates the normal Next.js build. `npm run build:worker`
 creates the deployable `.open-next` Worker and asset output. `npm run preview`

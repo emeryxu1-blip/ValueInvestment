@@ -17,9 +17,8 @@ export async function startCloudflareWorker() {
     CI: "true",
     NO_COLOR: "1",
   };
-  delete environment.AINVEST_C_COOKIE;
-  delete environment.AINVEST_EMAIL;
-  delete environment.AINVEST_PASSWORD;
+  delete environment.AINVEST_USERID;
+  delete environment.AINVEST_SESSIONID;
 
   const child = spawn(
     wranglerPath,

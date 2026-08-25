@@ -41,7 +41,9 @@ try {
 }
 
 function envFileValue(name) {
-  const match = devVars.match(new RegExp(`^(?:export\\s+)?${name}\\s*=\\s*(.*)$`, "m"));
+  const match = devVars.match(
+    new RegExp(`^(?:export[ \\t]+)?${name}[ \\t]*=[ \\t]*(.*)$`, "m"),
+  );
   if (!match) return null;
   const value = match[1].trim();
   if (
@@ -55,12 +57,10 @@ function envFileValue(name) {
 }
 
 const needles = [
-  envFileValue("AINVEST_EMAIL"),
-  envFileValue("AINVEST_PASSWORD"),
-  envFileValue("AINVEST_C_COOKIE"),
-  process.env.AINVEST_EMAIL,
-  process.env.AINVEST_PASSWORD,
-  process.env.AINVEST_C_COOKIE,
+  envFileValue("AINVEST_USERID"),
+  envFileValue("AINVEST_SESSIONID"),
+  process.env.AINVEST_USERID,
+  process.env.AINVEST_SESSIONID,
 ]
   .filter((value) => typeof value === "string" && value.length > 0)
   .filter((value, index, values) => values.indexOf(value) === index)

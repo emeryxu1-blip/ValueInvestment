@@ -60,17 +60,19 @@ chmod 600 .dev.vars
 ```
 
 ```dotenv
-AINVEST_EMAIL=your-account@example.com
-AINVEST_PASSWORD=your-password
+AINVEST_USERID=your-account-userid
+AINVEST_SESSIONID=your-account-sessionid
 ```
 
-Do not commit `.dev.vars`, paste it into issues, or send it through a public
-channel. The development wrapper loads it before starting Next.js. The server
-retrieves and caches an AInvest session on demand, then signs in again and
-retries once when AInvest rejects an expired session. `AINVEST_C_COOKIE` is an
-optional legacy fallback and should normally remain commented out. If
-authentication is unavailable or rejected, market-data APIs fail closed
-instead of returning fabricated fallback values.
+Obtain these two values from an authenticated AInvest browser session. They are
+used only to construct the server-side C-side `Cookie` header. Do not commit
+`.dev.vars`, paste it into issues, or send it through a public channel. Session
+identifiers can expire or be revoked; replace both values when the application
+reports that the live market-data session is unavailable. The application does
+not attempt an email/password login because AInvest now requires an interactive
+email-certification step that is not available to this server-side flow. If the
+session is missing or rejected, market-data APIs fail closed without inserting
+snapshot or fabricated substitute values.
 
 Then install and start the application:
 
@@ -81,21 +83,12 @@ npm run db:migrate:local
 npm run dev
 ```
 
-The local screener uses a snapshot fixture at
-`.local/screener-snapshot.json`. `npm run dev` automatically downloads the
-current production snapshot into that ignored file on first startup, so a fresh
-clone can display screener data without a local D1 seed or private provider
-credentials. Refresh it at any time with:
+The screener uses its durable daily snapshot as its primary data source. A
+local clone must have a local snapshot generation (or run the explicit seed
+command below) before screener rows are available. The security research APIs
+do not use screener snapshots as fallback data; they require live AInvest data.
 
-```bash
-npm run sync:snapshot
-```
-
-The fixture is read-only local application input and is never committed. The
-local and production APIs use the same compact snapshot contract and the same
-application filtering code; only their persistence differs.
-
-To regenerate a complete snapshot from AInvest into local D1 instead, run:
+To regenerate a complete snapshot from AInvest into local D1, run:
 
 ```bash
 npm run seed:local
@@ -135,12 +128,12 @@ GitHub Actions repository secrets once:
   Workers Routes, D1, and account access needed by this project
 - `CLOUDFLARE_ACCOUNT_ID` — the Cloudflare account ID that owns the Worker and D1
 
-Production AInvest credentials remain Cloudflare Worker secrets and are not put
-in GitHub Actions, source control, or `.dev.vars`. Set them once with Wrangler:
+Production AInvest session identifiers remain Cloudflare Worker secrets and are
+not put in GitHub Actions or source control. Set them once with Wrangler:
 
 ```bash
-npx wrangler secret put AINVEST_EMAIL
-npx wrangler secret put AINVEST_PASSWORD
+npx wrangler secret put AINVEST_USERID
+npx wrangler secret put AINVEST_SESSIONID
 ```
 
 After that, collaborators can work locally, push a reviewed change to `main`,
@@ -167,17 +160,16 @@ Worker. The workflow intentionally deploys only the `main` branch.
    npm run db:migrate:remote
    ```
 
-3. Store the server-only AInvest login as Worker secrets:
+3. Store the server-only AInvest session identifiers as Worker secrets:
 
    ```bash
-   npx wrangler secret put AINVEST_EMAIL
-   npx wrangler secret put AINVEST_PASSWORD
+   npx wrangler secret put AINVEST_USERID
+   npx wrangler secret put AINVEST_SESSIONID
    ```
 
    Never add either value to `wrangler.jsonc`, a browser environment variable,
-   or source control. Remove an existing `AINVEST_C_COOKIE` secret after the
-   credential pair is installed; it is only a fallback for cookie-only legacy
-   deployments.
+   or source control. Rotate both secrets together when the browser session is
+   expired or rejected.
 
 4. Build, test, and deploy:
 

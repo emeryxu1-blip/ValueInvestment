@@ -10,7 +10,7 @@ deployment instructions, and architecture documentation are in
 ```bash
 cd site
 cp .dev.vars.example .dev.vars
-# Edit .dev.vars privately with the AInvest credentials.
+# Edit .dev.vars privately with the AInvest session identifiers.
 chmod 600 .dev.vars
 npm install
 npm run cf:typegen

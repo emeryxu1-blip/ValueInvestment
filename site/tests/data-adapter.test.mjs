@@ -5,10 +5,7 @@ import {
   AInvestError,
   fetchAInvest,
 } from "../lib/ainvest/client.ts";
-import {
-  __resetAInvestAuthForTests,
-  splitSetCookieHeader,
-} from "../lib/ainvest/auth.ts";
+import { __resetAInvestAuthForTests } from "../lib/ainvest/auth.ts";
 import {
   liveDataUnavailable,
   routeError,
@@ -25,9 +22,8 @@ import {
 } from "../lib/ainvest/requests.ts";
 
 const AUTH_ENV_KEYS = [
-  "AINVEST_C_COOKIE",
-  "AINVEST_EMAIL",
-  "AINVEST_PASSWORD",
+  "AINVEST_USERID",
+  "AINVEST_SESSIONID",
 ];
 
 async function withAuthEnvironment(values, callback) {
@@ -48,29 +44,9 @@ async function withAuthEnvironment(values, callback) {
   }
 }
 
-function jsonWithCookies(payload, cookies, status = 200) {
-  const headers = new Headers({ "Content-Type": "application/json" });
-  for (const cookie of cookies) headers.append("Set-Cookie", cookie);
-  return new Response(JSON.stringify(payload), { status, headers });
-}
-
-const visitorCookies = [
-  "userid=1000000001; Domain=.ainvest.com; Path=/",
-  "sessionid=visitor-session; Domain=.ainvest.com; Path=/",
-  "u_name=mt_1000000001; Domain=.ainvest.com; Path=/",
-  "ticket=visitor-ticket; Domain=.ainvest.com; Path=/",
-];
-
-const accountCookies = [
-  "userid=2000000002; Domain=.ainvest.com; Path=/",
-  "sessionid=account-session; Domain=.ainvest.com; Path=/",
-  "u_name=member; Domain=.ainvest.com; Path=/",
-  "ticket=account-ticket; Domain=.ainvest.com; Path=/",
-];
-
 test("sends C-side authentication and program headers without serializing the cookie", async () => {
   await withAuthEnvironment(
-    { AINVEST_C_COOKIE: "userid=private; sessionid=private" },
+    { AINVEST_USERID: "private", AINVEST_SESSIONID: "private" },
     async () => {
       let captured;
       const fetcher = async (url, init) => {
@@ -85,7 +61,7 @@ test("sends C-side authentication and program headers without serializing the co
         "https://extquote.ainvest.com/index_api/indicator/v2/snapshot",
       );
       assert.equal(captured.init.headers["X-Auth-ProgId"], "7080");
-      assert.equal(captured.init.headers.Cookie, process.env.AINVEST_C_COOKIE);
+      assert.equal(captured.init.headers.Cookie, "userid=private; sessionid=private");
       assert.equal(captured.init.body, JSON.stringify(body));
       assert.doesNotMatch(JSON.stringify(result), /private/);
     },
@@ -101,274 +77,43 @@ test("fails closed when the server-only cookie is missing", async () => {
   });
 });
 
-test("retrieves and caches an authenticated cookie from AInvest credentials", async () => {
+test("constructs the C-side cookie from manual session identifiers", async () => {
   await withAuthEnvironment(
     {
-      AINVEST_EMAIL: "member@example.com",
-      AINVEST_PASSWORD: "test-password",
+      AINVEST_USERID: "2000000002",
+      AINVEST_SESSIONID: "account-session",
     },
     async () => {
-      const calls = [];
+      let captured;
       const fetcher = async (url, init = {}) => {
-        calls.push({ url, init });
-        if (url === "https://user.ainvest.com/auth/visitor/login") {
-          assert.equal(init.method, "POST");
-          assert.match(String(init.body), /clientType=WEB/);
-          assert.match(String(init.body), /udid=[0-9a-f-]{36}/i);
-          assert.match(init.headers.fingerprint, /^[0-9a-f-]{36}$/i);
-          return jsonWithCookies({ i18nMsg: "success" }, visitorCookies);
-        }
-        if (url === "https://user.ainvest.com/auth/user/v3/login") {
-          const loginBody = JSON.parse(init.body);
-          assert.deepEqual(
-            Object.keys(loginBody).sort(),
-            ["email", "loginType", "signedPwd", "token", "type", "visitorId"],
-          );
-          assert.equal(loginBody.email, "member@example.com");
-          assert.equal(loginBody.type, "EMAIL");
-          assert.equal(loginBody.loginType, "ACCOUNT_PWD");
-          assert.equal(loginBody.visitorId, "1000000001");
-          assert.equal(loginBody.token, "visitor-session");
-          assert.match(loginBody.signedPwd, /^\d{13}[A-Za-z0-9+/]+=*$/);
-          assert.doesNotMatch(init.body, /test-password/);
-          assert.match(init.headers.Cookie, /ticket=visitor-ticket/);
-          assert.match(init.headers.fingerprint, /^[0-9a-f-]{36}$/i);
-          return jsonWithCookies({ i18nMsg: "success" }, accountCookies);
-        }
-        assert.equal(
-          init.headers.Cookie,
-          "userid=2000000002; sessionid=account-session",
-        );
+        captured = { url, init };
         return Response.json({ status_code: 0, status_msg: "success", data: {} });
       };
-
       await fetchAInvest("snapshot", {}, { fetcher });
-      await fetchAInvest("snapshot", {}, { fetcher });
-      assert.equal(
-        calls.filter(
-          (call) =>
-            call.url === "https://user.ainvest.com/auth/visitor/login",
-        ).length,
-        1,
-      );
-      assert.equal(
-        calls.filter(
-          (call) => call.url === "https://user.ainvest.com/auth/user/v3/login",
-        ).length,
-        1,
-      );
+      assert.equal(captured.url, "https://extquote.ainvest.com/index_api/indicator/v2/snapshot");
+      assert.equal(captured.init.headers.Cookie, "userid=2000000002; sessionid=account-session");
     },
   );
 });
 
-test("prefers account login and renews an expired authenticated cookie", async () => {
+test("does not retry a rejected manual session without rotation", async () => {
   await withAuthEnvironment(
     {
-      AINVEST_C_COOKIE: "userid=expired; sessionid=expired",
-      AINVEST_EMAIL: "member@example.com",
-      AINVEST_PASSWORD: "test-password",
+      AINVEST_USERID: "2000000002",
+      AINVEST_SESSIONID: "expired",
     },
     async () => {
-      let loginRequests = 0;
       let marketRequests = 0;
-      const fetcher = async (url, init = {}) => {
-        if (url === "https://user.ainvest.com/auth/visitor/login") {
-          return jsonWithCookies({ i18nMsg: "success" }, visitorCookies);
-        }
-        if (url === "https://user.ainvest.com/auth/user/v3/login") {
-          loginRequests += 1;
-          return jsonWithCookies({ i18nMsg: "success" }, [
-            "userid=2000000002; Domain=.ainvest.com; Path=/",
-            `sessionid=account-session-${loginRequests}; Domain=.ainvest.com; Path=/`,
-            "u_name=member; Domain=.ainvest.com; Path=/",
-          ]);
-        }
+      const fetcher = async (_url, init = {}) => {
         marketRequests += 1;
-        if (marketRequests === 1) {
-          assert.equal(
-            init.headers.Cookie,
-            "userid=2000000002; sessionid=account-session-1",
-          );
-          return Response.json(
-            { status_code: 106, status_msg: "session expired", data: {} },
-          );
-        }
-        assert.equal(
-          init.headers.Cookie,
-          "userid=2000000002; sessionid=account-session-2",
-        );
-        return Response.json({ status_code: 0, status_msg: "success", data: {} });
+        assert.equal(init.headers.Cookie, "userid=2000000002; sessionid=expired");
+        return Response.json({ status_code: 106, status_msg: "session expired", data: {} });
       };
-
-      const result = await fetchAInvest("snapshot", {}, { fetcher });
-      assert.equal(result.status_code, 0);
-      assert.equal(loginRequests, 2);
-      assert.equal(marketRequests, 2);
-    },
-  );
-});
-
-test("deduplicates concurrent logins and cools down rejected credentials", async () => {
-  await withAuthEnvironment(
-    {
-      AINVEST_EMAIL: "member@example.com",
-      AINVEST_PASSWORD: "test-password",
-    },
-    async () => {
-      let bootstrapRequests = 0;
-      let loginRequests = 0;
-      const fetcher = async (url) => {
-        if (url === "https://user.ainvest.com/auth/visitor/login") {
-          bootstrapRequests += 1;
-          return jsonWithCookies({ i18nMsg: "success" }, visitorCookies);
-        }
-        if (url === "https://user.ainvest.com/auth/user/v3/login") {
-          loginRequests += 1;
-          return jsonWithCookies(
-            { errorCode: "PWD_NOT_MATCH", i18nMsg: "rejected" },
-            [],
-            466,
-          );
-        }
-        throw new Error("market request must not run after rejected login");
-      };
-
-      const first = await Promise.allSettled([
-        fetchAInvest("snapshot", {}, { fetcher }),
-        fetchAInvest("snapshot", {}, { fetcher }),
-      ]);
-      assert.ok(first.every((result) => result.status === "rejected"));
-      await assert.rejects(() => fetchAInvest("snapshot", {}, { fetcher }));
-      assert.equal(bootstrapRequests, 1);
-      assert.equal(loginRequests, 1);
-    },
-  );
-});
-
-test("keeps a shared login alive when one caller times out", async () => {
-  await withAuthEnvironment(
-    {
-      AINVEST_EMAIL: "member@example.com",
-      AINVEST_PASSWORD: "test-password",
-    },
-    async () => {
-      let bootstrapRequests = 0;
-      let loginRequests = 0;
-      const fetcher = async (url) => {
-        if (url === "https://user.ainvest.com/auth/visitor/login") {
-          bootstrapRequests += 1;
-          await new Promise((resolve) => setTimeout(resolve, 25));
-          return jsonWithCookies({ i18nMsg: "success" }, visitorCookies);
-        }
-        if (url === "https://user.ainvest.com/auth/user/v3/login") {
-          loginRequests += 1;
-          return jsonWithCookies({ i18nMsg: "success" }, accountCookies);
-        }
-        return Response.json({ status_code: 0, status_msg: "success", data: {} });
-      };
-
-      const timedOut = fetchAInvest("snapshot", {}, { fetcher, timeoutMs: 5 });
-      await Promise.resolve();
-      const healthy = fetchAInvest("snapshot", {}, { fetcher, timeoutMs: 200 });
-      const [timedOutResult, healthyResult] = await Promise.allSettled([
-        timedOut,
-        healthy,
-      ]);
-
-      assert.equal(timedOutResult.status, "rejected");
-      assert.equal(healthyResult.status, "fulfilled");
-      assert.equal(bootstrapRequests, 1);
-      assert.equal(loginRequests, 1);
-    },
-  );
-});
-
-test("retries authentication after a transient bootstrap failure", async () => {
-  await withAuthEnvironment(
-    {
-      AINVEST_EMAIL: "member@example.com",
-      AINVEST_PASSWORD: "test-password",
-    },
-    async () => {
-      let bootstrapRequests = 0;
-      const fetcher = async (url) => {
-        if (url === "https://user.ainvest.com/auth/visitor/login") {
-          bootstrapRequests += 1;
-          if (bootstrapRequests === 1) throw new Error("temporary network error");
-          return jsonWithCookies({ i18nMsg: "success" }, visitorCookies);
-        }
-        if (url === "https://user.ainvest.com/auth/user/v3/login") {
-          return jsonWithCookies({ i18nMsg: "success" }, accountCookies);
-        }
-        return Response.json({ status_code: 0, status_msg: "success", data: {} });
-      };
-
-      await assert.rejects(() => fetchAInvest("snapshot", {}, { fetcher }));
-      const result = await fetchAInvest("snapshot", {}, { fetcher });
-      assert.equal(result.status_code, 0);
-      assert.equal(bootstrapRequests, 2);
-    },
-  );
-});
-
-test("does not cache a renewed cookie that the market API also rejects", async () => {
-  await withAuthEnvironment(
-    {
-      AINVEST_C_COOKIE: "userid=expired; sessionid=expired",
-      AINVEST_EMAIL: "member@example.com",
-      AINVEST_PASSWORD: "test-password",
-    },
-    async () => {
-      let loginRequests = 0;
-      let marketRequests = 0;
-      const fetcher = async (url, init = {}) => {
-        if (url === "https://user.ainvest.com/auth/visitor/login") {
-          return jsonWithCookies({ i18nMsg: "success" }, visitorCookies);
-        }
-        if (url === "https://user.ainvest.com/auth/user/v3/login") {
-          loginRequests += 1;
-          return jsonWithCookies({ i18nMsg: "success" }, [
-            "userid=2000000002; Domain=.ainvest.com; Path=/",
-            `sessionid=account-session-${loginRequests}; Domain=.ainvest.com; Path=/`,
-            "u_name=member; Domain=.ainvest.com; Path=/",
-          ]);
-        }
-        marketRequests += 1;
-        if (marketRequests <= 2) {
-          return Response.json({
-            status_code: 106,
-            status_msg: "session expired",
-            data: {},
-          });
-        }
-        assert.equal(
-          init.headers.Cookie,
-          "userid=2000000002; sessionid=account-session-3",
-        );
-        return Response.json({ status_code: 0, status_msg: "success", data: {} });
-      };
-
-      await assert.rejects(
-        () => fetchAInvest("snapshot", {}, { fetcher }),
-        (error) => error instanceof AInvestError && error.kind === "auth",
+      await assert.rejects(() => fetchAInvest("snapshot", {}, { fetcher }), (error) =>
+        error instanceof AInvestError && error.kind === "auth",
       );
-      const result = await fetchAInvest("snapshot", {}, { fetcher });
-      assert.equal(result.status_code, 0);
-      assert.equal(loginRequests, 3);
-      assert.equal(marketRequests, 3);
+      assert.equal(marketRequests, 1);
     },
-  );
-});
-
-test("splits combined Set-Cookie headers without breaking Expires dates", () => {
-  assert.deepEqual(
-    splitSetCookieHeader(
-      "userid=1; Expires=Wed, 09 Sep 2026 03:14:32 GMT; Path=/, sessionid=2; Path=/",
-    ),
-    [
-      "userid=1; Expires=Wed, 09 Sep 2026 03:14:32 GMT; Path=/",
-      "sessionid=2; Path=/",
-    ],
   );
 });
 

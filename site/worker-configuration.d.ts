@@ -6,8 +6,8 @@ interface __BaseEnv_CloudflareEnv {
 	SECURITY_API_RATE_LIMITER: RateLimit;
 	SCREENER_API_RATE_LIMITER: RateLimit;
 	ASSETS: Fetcher;
-	AINVEST_EMAIL: string;
-	AINVEST_PASSWORD: string;
+	AINVEST_USERID: string;
+	AINVEST_SESSIONID: string;
 	WORKER_SELF_REFERENCE: Service<typeof import("./worker/index").default>;
 }
 declare namespace Cloudflare {
@@ -21,7 +21,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "AINVEST_EMAIL" | "AINVEST_PASSWORD">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "AINVEST_USERID" | "AINVEST_SESSIONID">> {}
 }
 
 // Begin runtime types
