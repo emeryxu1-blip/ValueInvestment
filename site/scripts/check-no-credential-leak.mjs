@@ -8,7 +8,6 @@ const projectRoot = resolve(import.meta.dirname, "..");
 const devVarsPath = resolve(projectRoot, ".dev.vars");
 const roots = [
   "dist",
-  ".next",
   ".open-next",
   ".vinext",
   ".wrangler",
