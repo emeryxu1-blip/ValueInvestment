@@ -76,10 +76,10 @@ At the first use of this skill in each conversation, run `scripts/export_indicat
    - Use B-side when the user mentions B-side, internal gateway, apisix, service-to-service, or `quote-apisix-gateway.hxapisix`.
    - Use C-side when the user mentions C-side, browser/client, web, cookie auth, or public quote domains.
    - For sandbox, check whether `AIME_API_KEY` is available.
-   - For B-side or C-side, extract the caller-provided apikey or Cookie from the current user request or prior conversation context.
+   - For B-side, extract the caller-provided apikey from the current user request or prior conversation context. For C-side, require userid and sessionid from the caller/context and construct the Cookie header; do not attempt private email/password login.
    - If the selected scene has the required auth, build the request and fetch data directly.
    - Compose the scene-specific auth header.
-   - If auth is unavailable, fall back to request construction and explain which env/header is missing.
+   - If auth is unavailable, return only the request construction and explain which credential is missing; never synthesize response data.
 3. Choose the endpoint:
    - Use `snapshot` for realtime values, rankings, related symbols, constituents, subsectors, and holdings.
    - Use `relation_list` for a plain list of related codes or ids without indicator values, such as ETF holding codes, index components, prompt components, or group components.

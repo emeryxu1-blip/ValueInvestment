@@ -319,11 +319,15 @@ def main():
             file=sys.stderr,
         )
         return 2
-    if args.scene == "c" and (args.userid or args.sessionid):
-        if not args.userid or not args.sessionid:
-            print("error: --userid and --sessionid must be provided together for c scene", file=sys.stderr)
+    if args.scene == "c":
+        if args.userid or args.sessionid:
+            if not args.userid or not args.sessionid:
+                print("error: --userid and --sessionid must be provided together for c scene", file=sys.stderr)
+                return 2
+            args.auth_value = f"userid={args.userid}; sessionid={args.sessionid}"
+        elif args.auth_value and not args.auth_value.strip().startswith("userid="):
+            print("error: c scene --auth-value must be a userid/sessionid Cookie", file=sys.stderr)
             return 2
-        args.auth_value = f"userid={args.userid}; sessionid={args.sessionid}"
     if args.scene != "b" and (args.index_api_apikey or args.quoteag_apikey):
         print(
             "error: --index-api-apikey and --quoteag-apikey are only supported for b scene",
