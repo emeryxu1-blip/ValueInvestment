@@ -182,26 +182,26 @@ function isValidFilterMask(
   );
 }
 
-function legacyAsOf(fallback: string): StoredSnapshotPayload["asOf"] {
+function legacyAsOf(missingAsOf: string): StoredSnapshotPayload["asOf"] {
   return {
-    company: fallback,
-    price: fallback,
-    changePercent: fallback,
-    marketCap: fallback,
-    fairValue: fallback,
-    mispricing: fallback,
-    pe: fallback,
-    revenueGrowth: fallback,
-    netIncome: fallback,
-    freeCashFlow: fallback,
-    debtToEquity: fallback,
-    evToEbitda: fallback,
-    returnOnInvestedCapital: fallback,
-    netDebt: fallback,
-    operatingMarginStable5Y: fallback,
-    operatingMarginTrend5Y: fallback,
-    operatingMarginsExpanding5Y: fallback,
-    sector: fallback,
+    company: missingAsOf,
+    price: missingAsOf,
+    changePercent: missingAsOf,
+    marketCap: missingAsOf,
+    fairValue: missingAsOf,
+    mispricing: missingAsOf,
+    pe: missingAsOf,
+    revenueGrowth: missingAsOf,
+    netIncome: missingAsOf,
+    freeCashFlow: missingAsOf,
+    debtToEquity: missingAsOf,
+    evToEbitda: missingAsOf,
+    returnOnInvestedCapital: missingAsOf,
+    netDebt: missingAsOf,
+    operatingMarginStable5Y: missingAsOf,
+    operatingMarginTrend5Y: missingAsOf,
+    operatingMarginsExpanding5Y: missingAsOf,
+    sector: missingAsOf,
   };
 }
 
@@ -211,9 +211,9 @@ function parsePayload(
   schemaVersion: number,
 ): StoredSnapshotPayload {
   const value = JSON.parse(raw) as Partial<StoredSnapshotPayload> | null;
-  const fallbackAsOf = legacyAsOf(legacyFallbackAsOf);
+  const legacyAsOfValues = legacyAsOf(legacyFallbackAsOf);
   const asOf = {
-    ...fallbackAsOf,
+    ...legacyAsOfValues,
     ...(value?.asOf ?? {}),
   };
   const acceptsMissingV2Fields =
@@ -554,13 +554,13 @@ async function readRowsForMetadata(
   ) {
     throw new Error("The active screener snapshot was incomplete.");
   }
-  const fallbackAsOf = new Date(metadata.refreshed_at).toISOString();
+  const missingAsOf = new Date(metadata.refreshed_at).toISOString();
   const rows = storedRows.map((row) =>
     rowFromStored(
       row,
       parsePayload(
         row.payload_json,
-        fallbackAsOf,
+        missingAsOf,
         metadata.filter_mask_schema_version,
       ),
       options.preserveStoredFilterMask === true,

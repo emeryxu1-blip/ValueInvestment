@@ -324,7 +324,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                 {
                   label: "Weights & targets",
                   value:
-                    "Gross margin 10 pts @40%; operating margin 15 @20%; net margin 15 @15%; FCF margin 15 @12%; cash conversion 15 @100%; ROIC (or ROE fallback) 20 @15%; earnings consistency 10 @100%.",
+                    "Gross margin 10 pts @40%; operating margin 15 @20%; net margin 15 @15%; FCF margin 15 @12%; cash conversion 15 @100%; ROIC (or ROE when ROIC is unavailable) 20 @15%; earnings consistency 10 @100%.",
                 },
                 {
                   label: "Missing inputs",
@@ -669,7 +669,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               {
                 label: "Peer set",
                 value:
-                  "Select up to eight closest issuers by the same industry-and-size policy used elsewhere. A broader sector fallback is allowed when fewer than three direct industry ratios are available.",
+                  "Select up to eight closest issuers by the same industry-and-size policy used elsewhere. A broader sector comparison is allowed when fewer than three direct industry ratios are available.",
               },
               {
                 label: "Normalization",

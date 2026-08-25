@@ -320,7 +320,7 @@ export const COLUMN_OPTIONS: Array<{
   { key: "price", label: "Last price", description: "Latest available market price" },
   { key: "changePercent", label: "Price change", description: "Change in the latest stored session" },
   { key: "marketCap", label: "Market cap", description: "Equity value in USD" },
-  { key: "fairValue", label: "Provider DCF", description: "Positive value at the latest date in the provider DCF series; no peer fallback" },
+  { key: "fairValue", label: "Provider DCF", description: "Positive value at the latest date in the provider DCF series; no peer estimate" },
   { key: "mispricing", label: "Value gap", description: "Provider DCF divided by stored price, minus one" },
   { key: "pe", label: "P/E", description: "Provider trailing-twelve-month price-to-earnings multiple" },
   { key: "revenueGrowth", label: "Revenue growth", description: "Provider trailing-twelve-month year-over-year growth" },
@@ -431,32 +431,32 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-function toStringValue(value: unknown, fallback = "") {
+function toStringValue(value: unknown, missingValue = "") {
   if (typeof value === "string" || typeof value === "number") return String(value);
-  if (isRecord(value) && "value" in value) return toStringValue(value.value, fallback);
-  return fallback;
+  if (isRecord(value) && "value" in value) return toStringValue(value.value, missingValue);
+  return missingValue;
 }
 
 function metric(
   raw: unknown,
-  fallbackSource: DataSource,
-  fallbackAsOf: string | null,
-  fallbackUnit?: string,
+  missingSource: DataSource,
+  missingAsOf: string | null,
+  missingUnit?: string,
 ): Metric<number> {
   if (isRecord(raw) && "value" in raw) {
     const source = raw.source;
     return {
       value: toNumber(raw.value),
-      source: source === "live" || source === "derived" ? source : fallbackSource,
-      asOf: typeof raw.asOf === "string" ? raw.asOf : fallbackAsOf,
-      unit: typeof raw.unit === "string" ? raw.unit : fallbackUnit,
+      source: source === "live" || source === "derived" ? source : missingSource,
+      asOf: typeof raw.asOf === "string" ? raw.asOf : missingAsOf,
+      unit: typeof raw.unit === "string" ? raw.unit : missingUnit,
       reason: typeof raw.reason === "string" ? raw.reason : undefined,
     };
   }
-  return { value: toNumber(raw), source: fallbackSource, asOf: fallbackAsOf, unit: fallbackUnit };
+  return { value: toNumber(raw), source: missingSource, asOf: missingAsOf, unit: missingUnit };
 }
 
-function normalizeRow(raw: unknown, fallbackSource: DataSource, asOf: string | null): ScreenerStock | null {
+function normalizeRow(raw: unknown, missingSource: DataSource, asOf: string | null): ScreenerStock | null {
   if (!isRecord(raw)) return null;
   const marketCode = toStringValue(firstDefined(raw.marketCode, raw.market_code, raw.code));
   const symbol = toStringValue(firstDefined(raw.symbol, raw.ticker, raw.stockCode, raw.securityCode));
@@ -467,10 +467,10 @@ function normalizeRow(raw: unknown, fallbackSource: DataSource, asOf: string | n
   const parsedFilterMask = toNumber(
     firstDefined(raw.filterMask, raw.filter_mask),
   );
-  const price = metric(firstDefined(raw.price, raw.lastPrice, raw.last_price, raw["10"]), fallbackSource, rowAsOf, "USD");
+  const price = metric(firstDefined(raw.price, raw.lastPrice, raw.last_price, raw["10"]), missingSource, rowAsOf, "USD");
   const fairValue = metric(
     firstDefined(raw.fairValue, raw.intrinsicValue, raw.dcfValue, raw.stockdiag_fundamental_value_dcf),
-    fallbackSource,
+    missingSource,
     rowAsOf,
     "USD",
   );
@@ -489,11 +489,11 @@ function normalizeRow(raw: unknown, fallbackSource: DataSource, asOf: string | n
     price,
     changePercent: metric(
       firstDefined(raw.changePercent, raw.priceChange, raw.change, raw.price_change_ratio_pct),
-      fallbackSource,
+      missingSource,
       rowAsOf,
       "%",
     ),
-    marketCap: metric(firstDefined(raw.marketCap, raw.market_cap, raw.total_market_value), fallbackSource, rowAsOf, "USD"),
+    marketCap: metric(firstDefined(raw.marketCap, raw.market_cap, raw.total_market_value), missingSource, rowAsOf, "USD"),
     fairValue,
     mispricing: metric(
       firstDefined(raw.mispricing, raw.upside, raw.discount),
@@ -501,8 +501,8 @@ function normalizeRow(raw: unknown, fallbackSource: DataSource, asOf: string | n
       rowAsOf,
       "ratio",
     ),
-    pe: metric(firstDefined(raw.pe, raw.priceToEarnings, raw.peRatio), fallbackSource, rowAsOf, "x"),
-    revenueGrowth: metric(firstDefined(raw.revenueGrowth, raw.revenue_growth), fallbackSource, rowAsOf, "%"),
+    pe: metric(firstDefined(raw.pe, raw.priceToEarnings, raw.peRatio), missingSource, rowAsOf, "x"),
+    revenueGrowth: metric(firstDefined(raw.revenueGrowth, raw.revenue_growth), missingSource, rowAsOf, "%"),
   };
 }
 
@@ -614,10 +614,10 @@ export function normalizeScreenerPayload(payload: unknown, httpStatus: number) {
   const body: UnknownRecord = isRecord(payload) ? payload : {};
   assertSupportedCompactSnapshot(body);
   const sourceValue = toStringValue(firstDefined(body.source, body.mode, body.dataMode));
-  const fallbackSource: DataSource = sourceValue === "derived" ? "derived" : "live";
+  const missingSource: DataSource = sourceValue === "derived" ? "derived" : "live";
   const asOf = toStringValue(body.asOf) || null;
   const rows = findRows(body)
-    .map((row) => normalizeRow(row, fallbackSource, asOf))
+    .map((row) => normalizeRow(row, missingSource, asOf))
     .filter((row): row is ScreenerStock => row !== null);
   const pageRecord = getNestedRecord(body, "page") ?? getNestedRecord(body, "pagination") ?? {};
   const parsedTotal = toNumber(firstDefined(pageRecord.total, body.total, body.totalCount, body.count));

@@ -46,18 +46,18 @@ const finiteNumber = (value: unknown): number | null => {
   return null;
 };
 
-const provenance = (value: unknown, fallback: Provenance): Provenance =>
+const provenance = (value: unknown, missingSource: Provenance): Provenance =>
   value === "live" || value === "derived"
     ? value
-    : fallback;
+    : missingSource;
 
 export const asMetric = <T extends number | string>(
   value: unknown,
-  fallback: T | null,
+  missingValue: T | null,
   source: Provenance = "derived",
   unit?: string,
 ): Metric<T> => {
-  const expectsNumber = typeof fallback === "number" || unit !== undefined;
+  const expectsNumber = typeof missingValue === "number" || unit !== undefined;
   if (isRecord(value) && "value" in value) {
     const inner = value.value;
     const parsed =
@@ -82,28 +82,28 @@ export const asMetric = <T extends number | string>(
         ? value
         : null;
   return {
-    value: (parsed ?? fallback) as T | null,
+    value: (parsed ?? missingValue) as T | null,
     source,
     asOf: null,
     unit,
-    reason: parsed === null && fallback === null ? "Value is unavailable" : undefined,
+    reason: parsed === null && missingValue === null ? "Value is unavailable" : undefined,
   };
 };
 
 const numberMetric = (
   raw: unknown,
   paths: string[],
-  fallback: number | null,
+  missingValue: number | null,
   unit?: string,
   source: Provenance = "derived",
-) => asMetric<number>(first(raw, paths), fallback, source, unit);
+) => asMetric<number>(first(raw, paths), missingValue, source, unit);
 
 const stringMetric = (
   raw: unknown,
   paths: string[],
-  fallback: string | null,
+  missingValue: string | null,
   source: Provenance = "derived",
-) => asMetric<string>(first(raw, paths), fallback, source);
+) => asMetric<string>(first(raw, paths), missingValue, source);
 
 const cleanPeriods = (value: unknown): FinancialPeriod[] => {
   if (!Array.isArray(value)) return [];
@@ -171,7 +171,7 @@ export function normalizeSummary(
   symbol: string,
 ): SecuritySummary {
   const raw = unwrap(payload);
-  const fallbackSource: Provenance = "derived";
+  const missingSource: Provenance = "derived";
   const identityRaw = first(raw, ["identity"]) ?? raw;
   const quoteRaw = first(raw, ["quote"]) ?? raw;
   const valuationRaw = first(raw, ["valuation"]) ?? raw;
@@ -183,28 +183,28 @@ export function normalizeSummary(
     ["price", "last", "lastPrice", "currentPrice"],
     null,
     "USD",
-    fallbackSource,
+    missingSource,
   );
   const dcfValue = numberMetric(
     valuationRaw,
     ["dcfValue", "dcf", "intrinsicValue"],
     null,
     "USD",
-    fallbackSource,
+    missingSource,
   );
   const peerValue = numberMetric(
     valuationRaw,
     ["peerValue", "relativeValue", "multiplesValue"],
     null,
     "USD",
-    fallbackSource,
+    missingSource,
   );
   const fairValue = numberMetric(
     valuationRaw,
     ["fairValue", "baseValue", "value"],
     null,
     "USD",
-    fallbackSource,
+    missingSource,
   );
 
   const annual = cleanPeriods(first(raw, ["financials.annual", "annualFinancials", "financials"]));
@@ -212,19 +212,19 @@ export function normalizeSummary(
 
   const fundamentalsRaw = (first(raw, ["fundamentals"]) ?? raw) as unknown;
   const fundamentals: Record<string, Metric<number>> = {
-    pe: numberMetric(fundamentalsRaw, ["pe", "priceEarnings", "peRatio"], null, "x", fallbackSource),
-    pb: numberMetric(fundamentalsRaw, ["pb", "priceBook", "pbRatio"], null, "x", fallbackSource),
-    ps: numberMetric(fundamentalsRaw, ["ps", "priceSales", "psRatio"], null, "x", fallbackSource),
-    eps: numberMetric(fundamentalsRaw, ["eps", "earningsPerShare"], null, "USD", fallbackSource),
-    revenue: numberMetric(fundamentalsRaw, ["revenue", "totalRevenue"], null, "USD", fallbackSource),
-    netIncome: numberMetric(fundamentalsRaw, ["netIncome", "income"], null, "USD", fallbackSource),
-    freeCashFlow: numberMetric(fundamentalsRaw, ["freeCashFlow", "fcf"], null, "USD", fallbackSource),
-    debt: numberMetric(fundamentalsRaw, ["debt", "totalDebt"], null, "USD", fallbackSource),
-    cash: numberMetric(fundamentalsRaw, ["cash", "cashAndEquivalents"], null, "USD", fallbackSource),
-    roe: numberMetric(fundamentalsRaw, ["roe", "returnOnEquity"], null, "%", fallbackSource),
-    revenueGrowth: numberMetric(fundamentalsRaw, ["revenueGrowth", "salesGrowth"], null, "%", fallbackSource),
-    earningsGrowth: numberMetric(fundamentalsRaw, ["earningsGrowth", "epsGrowth"], null, "%", fallbackSource),
-    dividendYield: numberMetric(fundamentalsRaw, ["dividendYield", "yield"], null, "%", fallbackSource),
+    pe: numberMetric(fundamentalsRaw, ["pe", "priceEarnings", "peRatio"], null, "x", missingSource),
+    pb: numberMetric(fundamentalsRaw, ["pb", "priceBook", "pbRatio"], null, "x", missingSource),
+    ps: numberMetric(fundamentalsRaw, ["ps", "priceSales", "psRatio"], null, "x", missingSource),
+    eps: numberMetric(fundamentalsRaw, ["eps", "earningsPerShare"], null, "USD", missingSource),
+    revenue: numberMetric(fundamentalsRaw, ["revenue", "totalRevenue"], null, "USD", missingSource),
+    netIncome: numberMetric(fundamentalsRaw, ["netIncome", "income"], null, "USD", missingSource),
+    freeCashFlow: numberMetric(fundamentalsRaw, ["freeCashFlow", "fcf"], null, "USD", missingSource),
+    debt: numberMetric(fundamentalsRaw, ["debt", "totalDebt"], null, "USD", missingSource),
+    cash: numberMetric(fundamentalsRaw, ["cash", "cashAndEquivalents"], null, "USD", missingSource),
+    roe: numberMetric(fundamentalsRaw, ["roe", "returnOnEquity"], null, "%", missingSource),
+    revenueGrowth: numberMetric(fundamentalsRaw, ["revenueGrowth", "salesGrowth"], null, "%", missingSource),
+    earningsGrowth: numberMetric(fundamentalsRaw, ["earningsGrowth", "epsGrowth"], null, "%", missingSource),
+    dividendYield: numberMetric(fundamentalsRaw, ["dividendYield", "yield"], null, "%", missingSource),
   };
 
   const narrativeValue = first(raw, ["narrative", "analysis.narrative"]);
@@ -251,31 +251,31 @@ export function normalizeSummary(
       marketCode: String(first(identityRaw, ["marketCode", "market_code"]) ?? ""),
       exchange: String(first(identityRaw, ["exchange"]) ?? exchange).toUpperCase(),
       symbol: String(first(identityRaw, ["symbol", "ticker"]) ?? symbol).toUpperCase(),
-      company: stringMetric(identityRaw, ["company", "name", "companyName"], symbol.toUpperCase(), fallbackSource),
-      description: stringMetric(identityRaw, ["description", "profile", "summary"], null, fallbackSource),
-      sector: stringMetric(identityRaw, ["sector"], null, fallbackSource),
-      industry: stringMetric(identityRaw, ["industry"], null, fallbackSource),
-      country: stringMetric(identityRaw, ["country"], null, fallbackSource),
+      company: stringMetric(identityRaw, ["company", "name", "companyName"], symbol.toUpperCase(), missingSource),
+      description: stringMetric(identityRaw, ["description", "profile", "summary"], null, missingSource),
+      sector: stringMetric(identityRaw, ["sector"], null, missingSource),
+      industry: stringMetric(identityRaw, ["industry"], null, missingSource),
+      country: stringMetric(identityRaw, ["country"], null, missingSource),
       currency: String(first(identityRaw, ["currency"]) ?? "USD"),
     },
     quote: {
       price,
-      changePercent: numberMetric(quoteRaw, ["changePercent", "change", "dailyChange"], null, "%", fallbackSource),
-      marketCap: numberMetric(quoteRaw, ["marketCap", "marketCapitalization"], null, "USD", fallbackSource),
-      previousClose: numberMetric(quoteRaw, ["previousClose", "prevClose"], null, "USD", fallbackSource),
-      dayHigh: numberMetric(quoteRaw, ["dayHigh", "high"], null, "USD", fallbackSource),
-      dayLow: numberMetric(quoteRaw, ["dayLow", "low"], null, "USD", fallbackSource),
+      changePercent: numberMetric(quoteRaw, ["changePercent", "change", "dailyChange"], null, "%", missingSource),
+      marketCap: numberMetric(quoteRaw, ["marketCap", "marketCapitalization"], null, "USD", missingSource),
+      previousClose: numberMetric(quoteRaw, ["previousClose", "prevClose"], null, "USD", missingSource),
+      dayHigh: numberMetric(quoteRaw, ["dayHigh", "high"], null, "USD", missingSource),
+      dayLow: numberMetric(quoteRaw, ["dayLow", "low"], null, "USD", missingSource),
     },
     valuation: {
       dcfValue,
       peerValue,
       fairValue,
-      mispricing: numberMetric(valuationRaw, ["mispricing", "upside", "marginOfSafety"], null, "ratio", fallbackSource),
+      mispricing: numberMetric(valuationRaw, ["mispricing", "upside", "marginOfSafety"], null, "ratio", missingSource),
     },
     scores: {
-      past: numberMetric(scoreRaw, ["past", "pastScore"], null, "score", fallbackSource),
-      health: numberMetric(scoreRaw, ["health", "healthScore"], null, "score", fallbackSource),
-      future: numberMetric(scoreRaw, ["future", "futureScore"], null, "score", fallbackSource),
+      past: numberMetric(scoreRaw, ["past", "pastScore"], null, "score", missingSource),
+      health: numberMetric(scoreRaw, ["health", "healthScore"], null, "score", missingSource),
+      future: numberMetric(scoreRaw, ["future", "futureScore"], null, "score", missingSource),
     },
     fundamentals,
     financials: {
@@ -288,22 +288,22 @@ export function normalizeSummary(
         ["derived.netMargin"],
         null,
         "ratio",
-        fallbackSource,
+        missingSource,
       ),
       freeCashFlowMargin: numberMetric(
         raw,
         ["derived.freeCashFlowMargin"],
         null,
         "ratio",
-        fallbackSource,
+        missingSource,
       ),
       cashFlowBridge: cleanFinancialBridge(
         first(raw, ["derived.cashFlowBridge"]),
       ),
     },
     capitalReturns: {
-      dividends: numberMetric(raw, ["capitalReturns.dividends", "dividends"], null, "USD", fallbackSource),
-      debtToEquity: numberMetric(raw, ["capitalReturns.debtToEquity", "debtToEquity"], null, "x", fallbackSource),
+      dividends: numberMetric(raw, ["capitalReturns.dividends", "dividends"], null, "USD", missingSource),
+      debtToEquity: numberMetric(raw, ["capitalReturns.debtToEquity", "debtToEquity"], null, "x", missingSource),
     },
     narrative: Array.isArray(narrativeValue)
       ? narrativeValue

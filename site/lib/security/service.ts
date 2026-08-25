@@ -140,7 +140,7 @@ export async function getSecuritySummary(
   const applicability = companyAnalysisApplicability(resolved, row);
   const companyAnalysisSupported = applicability.companyAnalysis;
   const companyAnalysisReason = applicability.reason;
-  const [peers, fallbackFinancials] = await Promise.all([
+  const [peers, seriesFinancials] = await Promise.all([
     companyAnalysisSupported
       ? getPeersResponse(resolved, row).catch(() =>
           unavailablePeersResponse(
@@ -156,7 +156,7 @@ export async function getSecuritySummary(
       : fetchFinancials(resolved),
   ]);
   const financials =
-    moduleFinancials.quarterly.length > 0 ? moduleFinancials : fallbackFinancials;
+    moduleFinancials.quarterly.length > 0 ? moduleFinancials : seriesFinancials;
   const dcfModule = parseDcfModule(objectValue(row, "fairValueModule"));
   const dcfValue = companyAnalysisSupported
     ? positiveNumber(dcfModule.fairValue)

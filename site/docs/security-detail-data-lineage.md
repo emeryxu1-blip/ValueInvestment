@@ -48,7 +48,7 @@ provider facts:
   usable peers, the backend repeats the same rules over the provider's broader
   sector group;
 - whenever the broader sector group is used, the API and UI disclose that
-  fallback even when the final medians are complete;
+  broader-sector comparison even when the final medians are complete;
 - alternate share classes of the target issuer are excluded; valuation peers
   require multiple coverage, while business-quality peers are selected by
   direct net-margin or return-on-equity coverage so loss-making companies are

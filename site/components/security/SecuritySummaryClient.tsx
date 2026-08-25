@@ -318,7 +318,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             title="How estimated value is selected"
             summary="Implied value gap = selected value ÷ current price − 1"
             badges={[
-              data.valuation.dcfValue.value !== null ? "Provider DCF selected" : data.valuation.peerValue.value !== null ? "Peer fallback selected" : "No value selected",
+              data.valuation.dcfValue.value !== null ? "Provider DCF selected" : data.valuation.peerValue.value !== null ? "Peer estimate selected" : "No value selected",
               data.valuation.dcfValue.value !== null
                 ? `DCF ${asOfDate(data.valuation.dcfValue.asOf)}`
                 : data.valuation.peerValue.value !== null
@@ -403,7 +403,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             id="financials-heading"
             eyebrow="Owner earnings"
             title="Do profits become cash?"
-            description="Fiscal-year totals are used when returned. A series fallback is explicitly labelled as a year-end TTM observation rather than an annual sum."
+            description="Fiscal-year totals are used when returned. If only the provider series is available, it is labelled as a year-end TTM observation rather than an annual sum."
             icon={<FileText aria-hidden="true" />}
           />
           <FinancialHistoryChart periods={data.financials.annual} />
