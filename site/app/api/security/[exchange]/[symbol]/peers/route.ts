@@ -5,8 +5,6 @@ import {
   unsupportedCompanyAnalysisReason,
 } from "../../../../../../lib/market-codes";
 import { getPeersResponse } from "../../../../../../lib/security/peers";
-import { securityFallbackSnapshot } from "../../../../../../lib/security/fallback-snapshot";
-import { snapshotRowForSecurity } from "../../../../../../lib/security/screener-fallback";
 import { securityParamsSchema } from "../../../../../../lib/validation";
 
 type RouteContext = {
@@ -37,29 +35,9 @@ export async function GET(
         { status: 422 },
       );
     }
-    try {
-      return jsonResponse(await getPeersResponse(resolved), {
-        cacheControl: "public, max-age=300, stale-while-revalidate=900",
-      });
-    } catch (error) {
-      const snapshot = await securityFallbackSnapshot();
-      const row = snapshot ? snapshotRowForSecurity(snapshot, resolved) : null;
-      if (!snapshot || !row) throw error;
-      return jsonResponse({
-        symbol: resolved.symbol,
-        marketCode: resolved.marketCode,
-        peers: [],
-        medians: {
-          pe: { value: null, source: "derived", asOf: snapshot.asOf, reason: "Peer data is temporarily unavailable." },
-          pb: { value: null, source: "derived", asOf: snapshot.asOf, reason: "Peer data is temporarily unavailable." },
-          ps: { value: null, source: "derived", asOf: snapshot.asOf, reason: "Peer data is temporarily unavailable." },
-        },
-        peerValue: { value: null, source: "derived", asOf: snapshot.asOf, reason: "Peer data is temporarily unavailable." },
-        selectionReason: "Peer data is temporarily unavailable.",
-        source: "derived",
-        asOf: snapshot.asOf,
-      }, { cacheControl: "no-store" });
-    }
+    return jsonResponse(await getPeersResponse(resolved), {
+      cacheControl: "public, max-age=300, stale-while-revalidate=900",
+    });
   } catch (error) {
     return routeError(error);
   }

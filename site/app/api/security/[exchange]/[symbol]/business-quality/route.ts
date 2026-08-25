@@ -5,8 +5,6 @@ import {
   unsupportedCompanyAnalysisReason,
 } from "@/lib/market-codes";
 import { getBusinessQualityResponse } from "@/lib/security/business-quality-service";
-import { fallbackBusinessQuality } from "@/lib/security/fallback-business-quality";
-import { securityFallbackSnapshot } from "@/lib/security/fallback-snapshot";
 import { securityParamsSchema } from "@/lib/validation";
 
 type RouteContext = {
@@ -40,17 +38,9 @@ export async function GET(
         { status: 422 },
       );
     }
-    try {
-      return jsonResponse(await getBusinessQualityResponse(resolved), {
-        cacheControl: "public, max-age=30, stale-while-revalidate=120",
-      });
-    } catch (error) {
-      const snapshot = await securityFallbackSnapshot();
-      if (!snapshot) throw error;
-      return jsonResponse(fallbackBusinessQuality(resolved, snapshot), {
-        cacheControl: "no-store",
-      });
-    }
+    return jsonResponse(await getBusinessQualityResponse(resolved), {
+      cacheControl: "public, max-age=30, stale-while-revalidate=120",
+    });
   } catch (error) {
     return routeError(error);
   }

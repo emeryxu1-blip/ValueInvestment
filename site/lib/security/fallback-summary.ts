@@ -34,7 +34,7 @@ export function fallbackSecuritySummary(
   const unavailableMetric = <T>(unit?: string) => unavailable<T>(reason, unit);
   return {
     applicability: {
-      companyAnalysis: true,
+      companyAnalysis: false,
       securityType: resolved.securityType,
       reason,
     },
