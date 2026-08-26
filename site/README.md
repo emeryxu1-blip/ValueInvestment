@@ -129,12 +129,22 @@ GitHub Actions repository secrets once:
 - `CLOUDFLARE_ACCOUNT_ID` — the Cloudflare account ID that owns the Worker and D1
 
 Production AInvest session identifiers remain Cloudflare Worker secrets and are
-not put in GitHub Actions or source control. Set them once with Wrangler:
+not put in GitHub Actions or source control. After updating the private local
+`.dev.vars` file, rotate both production secrets together with the repository
+script:
 
 ```bash
-npx wrangler secret put AINVEST_USERID
-npx wrangler secret put AINVEST_SESSIONID
+npm run rotate:ainvest -- --dry-run
+npm run rotate:ainvest -- --verify
 ```
+
+The script reads the two values from `.dev.vars`, validates them, and sends the
+required JSON payload to `wrangler secret bulk` over stdin. The values never
+appear in command arguments, logs, or files created by the script. Use `--verify`
+to make a small authenticated AInvest snapshot request before updating
+Cloudflare. The script requires the credential file to be private (`chmod 600`).
+If you prefer to update secrets manually, use `npx wrangler secret put` for each
+key and never paste the values into a shell command.
 
 After that, collaborators can work locally, push a reviewed change to `main`,
 and GitHub Actions will run validation, apply migrations, and deploy the live
@@ -163,13 +173,13 @@ Worker. The workflow intentionally deploys only the `main` branch.
 3. Store the server-only AInvest session identifiers as Worker secrets:
 
    ```bash
-   npx wrangler secret put AINVEST_USERID
-   npx wrangler secret put AINVEST_SESSIONID
+   npm run rotate:ainvest -- --verify
    ```
 
-   Never add either value to `wrangler.jsonc`, a browser environment variable,
-   or source control. Rotate both secrets together when the browser session is
-   expired or rejected.
+   This verifies the local C-side session and atomically updates both encrypted
+   Worker secrets. Never add either value to `wrangler.jsonc`, a browser
+   environment variable, or source control. Rotate both secrets together when
+   the browser session is expired or rejected.
 
 4. Build, test, and deploy:
 

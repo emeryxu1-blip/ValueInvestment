@@ -220,17 +220,24 @@ requires:
    npm run db:migrate:remote
    ```
 
-3. Add the manually acquired upstream session identifiers as Worker secrets:
+3. Add the manually acquired upstream session identifiers as Worker secrets.
+   First update the private local `site/.dev.vars` file, then run the rotation
+   helper from `site/`:
 
    ```bash
-   npx wrangler secret put AINVEST_USERID
-   npx wrangler secret put AINVEST_SESSIONID
+   npm run rotate:ainvest -- --dry-run
+   npm run rotate:ainvest -- --verify
    ```
 
-   Use a
+   The helper validates both values and sends the required JSON payload to
+   `wrangler secret bulk` over stdin. It does not put credential values in
+   command-line arguments, logs, or script-created files. The `--verify` step
+   must pass before the production update is attempted. Use a
    [Worker secret](https://developers.cloudflare.com/workers/configuration/secrets/),
    not a plaintext `vars` value or a browser environment variable. Rotate both
-   values together when AInvest rejects the session.
+   values together when AInvest rejects the session. If the helper is not
+   available, use `npx wrangler secret put` interactively for each key and keep
+   the values out of shell history.
 
 4. Build and verify the Worker locally:
 
