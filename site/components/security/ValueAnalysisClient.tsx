@@ -305,7 +305,7 @@ export default function ValueAnalysisClient({
               {
                 label: "DCF value",
                 expression:
-                  "latest positive dated DCF output from the server calculation",
+                  "latest positive dated DCF reference selected by the server",
               },
               {
                 label: "Value gap",
@@ -321,7 +321,7 @@ export default function ValueAnalysisClient({
               {
                 label: "Calculation",
                 value:
-                  "The server returns the DCF value; the browser does not recalculate it.",
+                  "The server selects and returns the latest positive dated DCF reference; its underlying forecast and assumptions are not reproduced here.",
               },
               {
                 label: "Price snapshot",
@@ -580,7 +580,7 @@ function CashFlowSections({
             {
               label: "Supporting cash-flow evidence",
               value:
-                "This FCF series supports diligence; the DCF analysis value is calculated separately on the server and is not reconstructed from this chart in the browser.",
+                "This FCF series supports diligence; it does not reconstruct the separately returned DCF reference.",
             },
           ]}
         />
@@ -595,9 +595,9 @@ function CashFlowSections({
             <p className="analysis-label">DCF value</p>
             <h2 id="calculation-bridge">DCF value versus the market</h2>
             <p>
-              The server returns the DCF value from the
-              latest fundamentals and compares it with the current price. Cash, debt,
-              and shares are part of the disclosed equity bridge; the browser only formats it.
+              The server returns the selected DCF reference and compares it with
+              the current price. Cash, debt, and shares are shown as context for
+              diligence; they do not reconstruct the DCF reference in the browser.
             </p>
           </div>
         </div>
@@ -640,7 +640,7 @@ function CashFlowSections({
           <EmptyAnalysis message="The DCF reference is unavailable for this security." />
         )}
         <CalculationDisclosure
-          title="DCF value calculation"
+          title="DCF reference and value-gap calculation"
           summary="DCF value per share ÷ analysis price − 1"
           badges={[
             valuation?.providerValuePeriod
@@ -655,17 +655,17 @@ function CashFlowSections({
               label: "Selected period",
               value:
                 valuation?.providerValuePeriod ??
-                "The current DCF calculation has no dated forecast period.",
+                "The returned DCF reference has no dated model period.",
             },
             {
               label: "Context-only rows",
               value:
-                "The DCF value is returned by the server; the browser does not recalculate it.",
+                "Cash, debt, and shares are shown for context and are not inputs to a browser-side DCF calculation.",
             },
             {
               label: "Reproducibility",
               value:
-                "The server performs the calculation; the browser only formats the value and calculates display geometry.",
+                "The app selects and displays the returned DCF reference; its underlying forecasts and assumptions are not reproduced here.",
             },
           ]}
         />
