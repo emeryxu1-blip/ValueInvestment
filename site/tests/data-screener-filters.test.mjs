@@ -88,7 +88,7 @@ test("canonicalizes saved filters and restores both immutable universe rules", (
   assert.deepEqual(
     filters.slice(2, 5).map((filter) => [filter.label, filter.shortLabel]),
     [
-      ["Meaningful provider value gap", "Provider DCF ÷ positive price − 1 ≥ 20%"],
+      ["Meaningful DCF value gap", "DCF value ÷ positive price − 1 ≥ 20%"],
       ["Profitable at a low multiple", "0 < P/E ≤ 15×"],
       ["Strong cash-flow yield", "TTM FCF ÷ market cap ≥ 5%"],
     ],

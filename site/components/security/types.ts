@@ -1,6 +1,10 @@
-import type { FinancialBridge } from "@/lib/contracts";
+import type {
+  EarningsPowerMethod,
+  FinancialBridge,
+  ValuationCoverage,
+} from "@/lib/contracts";
 
-export type Provenance = "live" | "derived";
+export type Provenance = "live" | "derived" | "unknown";
 
 export type Metric<T> = {
   value: T | null;
@@ -31,7 +35,7 @@ export type SecuritySummary = {
     sector: Metric<string>;
     industry: Metric<string>;
     country: Metric<string>;
-    currency: string;
+    currency: "USD";
   };
   quote: {
     price: Metric<number>;
@@ -43,9 +47,12 @@ export type SecuritySummary = {
   };
   valuation: {
     dcfValue: Metric<number>;
+    dcfModelPeriod: string | null;
+    earningsPowerFloor: Metric<number>;
     peerValue: Metric<number>;
     fairValue: Metric<number>;
     mispricing: Metric<number>;
+    earningsPowerMethod: EarningsPowerMethod;
   };
   scores: {
     past: Metric<number>;
@@ -78,6 +85,7 @@ export type SeriesLine = {
   label: string;
   unit?: string;
   points: Array<{ time: string; value: number }>;
+  seriesKind?: "historical" | "reference-overlay" | "model-period";
 };
 
 export type SeriesResponse = {
@@ -88,6 +96,12 @@ export type SeriesResponse = {
   series: SeriesLine[];
   source: Provenance;
   asOf: string | null;
+  oldestTime?: string | null;
+  newestTime?: string | null;
+  hasMore?: boolean;
+  nextCursor?: number | null;
+  before?: number | null;
+  valuationCoverage?: ValuationCoverage;
 };
 
 export type Peer = {

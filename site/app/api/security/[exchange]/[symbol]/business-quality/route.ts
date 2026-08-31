@@ -39,7 +39,7 @@ export async function GET(
       );
     }
     return jsonResponse(await getBusinessQualityResponse(resolved), {
-      cacheControl: "public, max-age=30, stale-while-revalidate=120",
+      cacheControl: "no-store",
     });
   } catch (error) {
     return routeError(error);

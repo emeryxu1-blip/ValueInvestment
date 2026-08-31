@@ -36,7 +36,7 @@ export async function GET(
       );
     }
     return jsonResponse(await getPeersResponse(resolved), {
-      cacheControl: "public, max-age=300, stale-while-revalidate=900",
+      cacheControl: "no-store",
     });
   } catch (error) {
     return routeError(error);

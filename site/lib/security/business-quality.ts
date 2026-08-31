@@ -422,7 +422,9 @@ export function calculateBusinessQuality(
     ? profitability.metrics.returnOnEquity
     : rawRoe === null
       ? null
-      : rawRoe / 100;
+      : summary.fundamentals.roe.unit === "%"
+        ? rawRoe / 100
+        : rawRoe;
   const returnOnAssets =
     profitability?.metrics.returnOnAssets ?? null;
   const returnOnInvestedCapital =

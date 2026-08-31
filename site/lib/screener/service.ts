@@ -88,12 +88,11 @@ export type ScreenerQuery = {
 function liveMetricNumber(
   row: NormalizedSnapshotRow,
   requestId: string,
-  fetchedAt: string,
   unit?: string,
 ) {
   const value = displayNumberValue(row, requestId);
   return metric(value, "live", {
-    asOf: row.values[requestId]?.asOf ?? fetchedAt,
+    asOf: row.values[requestId]?.asOf ?? null,
     unit,
     ...(value == null ? { reason: "Market data returned no value for this metric." } : {}),
   });
@@ -101,7 +100,6 @@ function liveMetricNumber(
 
 export function screenerRowFromSnapshot(
   row: NormalizedSnapshotRow,
-  fetchedAt: string,
 ): ScreenerRow {
   const catalog = catalogEntryForMarketCode(row.symbolCode);
   const company = stringValue(row, "company") ?? catalog?.companyName ?? null;
@@ -112,43 +110,39 @@ export function screenerRowFromSnapshot(
   const operatingMargins = summarizeOperatingMarginHistory(
     objectValue(row, "operatingMarginHistory"),
   );
-  const fairAsOf = row.values.fairValueModule?.asOf ?? fetchedAt;
+  const fairAsOf = row.values.fairValueModule?.asOf ?? null;
   const result: Omit<ScreenerRow, "filterMask"> = {
     marketCode: row.symbolCode,
     exchange: catalog?.exchange ?? routeExchangeForMarketCode(row.symbolCode),
     symbol: catalog?.symbol ?? symbolFromMarketCode(row.symbolCode),
     company: metric(company, companySource, {
-      asOf: companySource === "live" ? row.values.company?.asOf ?? fetchedAt : null,
+      asOf: companySource === "live" ? row.values.company?.asOf ?? null : null,
       ...(company == null ? { reason: "Company name is unavailable." } : {}),
     }),
-    price: liveMetricNumber(row, "price", fetchedAt, "USD"),
-    changePercent: liveMetricNumber(row, "changePercent", fetchedAt, "%"),
-    marketCap: liveMetricNumber(row, "marketCap", fetchedAt, "USD"),
+    price: liveMetricNumber(row, "price", "USD"),
+    changePercent: liveMetricNumber(row, "changePercent", "%"),
+    marketCap: liveMetricNumber(row, "marketCap", "USD"),
     fairValue: metric(fairValue, "live", {
       asOf: fairAsOf,
       unit: "USD",
+
       ...(fairValue == null
-        ? { reason: "Market data returned no supported cash-flow value." }
+        ? { reason: "No positive DCF value is available." }
         : {}),
     }),
     mispricing: metric(deriveMispricing(fairValue, price), "derived", {
       asOf: fairAsOf,
       unit: "ratio",
-      reason: "Calculated as fair value divided by price, minus one.",
+      reason: "Calculated as the DCF value divided by price, minus one.",
     }),
-    pe: liveMetricNumber(row, "pe", fetchedAt, "x"),
-    revenueGrowth: liveMetricNumber(row, "revenueGrowth", fetchedAt, "%"),
-    netIncome: liveMetricNumber(row, "netIncome", fetchedAt, "USD"),
-    freeCashFlow: liveMetricNumber(row, "freeCashFlow", fetchedAt, "USD"),
-    debtToEquity: liveMetricNumber(row, "debtToEquity", fetchedAt, "%"),
-    evToEbitda: liveMetricNumber(row, "evToEbitda", fetchedAt, "x"),
-    returnOnInvestedCapital: liveMetricNumber(
-      row,
-      "returnOnInvestedCapital",
-      fetchedAt,
-      "%",
-    ),
-    netDebt: liveMetricNumber(row, "netDebt", fetchedAt, "USD"),
+    pe: liveMetricNumber(row, "pe", "x"),
+    revenueGrowth: liveMetricNumber(row, "revenueGrowth", "%"),
+    netIncome: liveMetricNumber(row, "netIncome"),
+    freeCashFlow: liveMetricNumber(row, "freeCashFlow"),
+    debtToEquity: liveMetricNumber(row, "debtToEquity", "%"),
+    evToEbitda: liveMetricNumber(row, "evToEbitda", "x"),
+    returnOnInvestedCapital: liveMetricNumber(row, "returnOnInvestedCapital", "%"),
+    netDebt: liveMetricNumber(row, "netDebt"),
     operatingMarginStable5Y: metric(operatingMargins.stable5Y, "derived", {
       asOf: operatingMargins.asOf,
       reason:
@@ -172,7 +166,7 @@ export function screenerRowFromSnapshot(
           : "True when the five-year least-squares slope is positive and the latest margin exceeds the earliest.",
     }),
     sector: metric(stringValue(row, "sector"), "live", {
-      asOf: row.values.sector?.asOf ?? fetchedAt,
+      asOf: row.values.sector?.asOf ?? null,
       ...(stringValue(row, "sector") == null
         ? { reason: "Market data returned no sector." }
         : {}),
@@ -200,8 +194,7 @@ async function fetchStoredUniverse(marketCodes: string[]): Promise<ScreenerRow[]
       ),
     );
     for (const [index, payload] of payloads.entries()) {
-      const fetchedAt = new Date().toISOString();
-      rows.push(...screenerRowsForUniversePayload(payload, batches[index], fetchedAt));
+      rows.push(...screenerRowsForUniversePayload(payload, batches[index]));
     }
   }
   assertExactUniverseMarketCodes(
@@ -214,7 +207,6 @@ async function fetchStoredUniverse(marketCodes: string[]): Promise<ScreenerRow[]
 function screenerRowsForUniversePayload(
   payload: unknown,
   requestedMarketCodes: string[],
-  fetchedAt: string,
 ): ScreenerRow[] {
   const snapshot = normalizeSnapshot(payload);
   const normalized = snapshot.rows;
@@ -233,7 +225,7 @@ function screenerRowsForUniversePayload(
     requestedMarketCodes,
     normalized.map((row) => row.symbolCode),
   );
-  return normalized.map((row) => screenerRowFromSnapshot(row, fetchedAt));
+  return normalized.map((row) => screenerRowFromSnapshot(row));
 }
 
 function assertFilterMetricCoverage(rows: ScreenerRow[]): void {
@@ -547,7 +539,7 @@ function responseFromRows(
       columns: query.columns,
     },
     ...(options.scan ? { scan: options.scan } : {}),
-    asOf: new Date().toISOString(),
+    asOf: null,
     ...(message ? { message } : {}),
   };
 }

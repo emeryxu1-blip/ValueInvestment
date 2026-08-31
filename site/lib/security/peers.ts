@@ -32,7 +32,6 @@ import { assertCompanyAnalysisApplicable } from "./company-analysis-applicabilit
 function liveNumber(
   row: NormalizedSnapshotRow,
   id: string,
-  _fetchedAt: string,
   unit?: string,
 ): Metric<number> {
   const value = numberValue(row, id);
@@ -57,21 +56,21 @@ function liveRatio(
   });
 }
 
-function peerFromRow(row: NormalizedSnapshotRow, fetchedAt: string): PeerRow {
+function peerFromRow(row: NormalizedSnapshotRow): PeerRow {
   const catalog = catalogEntryForMarketCode(row.symbolCode);
   const liveCompany = stringValue(row, "company");
   return {
     marketCode: row.symbolCode,
     symbol: catalog?.symbol ?? symbolFromMarketCode(row.symbolCode),
-    company: metric(liveCompany ?? catalog?.companyName ?? null, liveCompany ? "live" : "derived", {
+    company: metric(liveCompany, liveCompany ? "live" : "unknown", {
       asOf: liveCompany ? row.values.company?.asOf ?? null : null,
-      ...(!liveCompany && !catalog?.companyName ? { reason: "Company name is unavailable." } : {}),
+      ...(!liveCompany ? { reason: "Company name is unavailable in the current market data." } : {}),
     }),
-    price: liveNumber(row, "price", fetchedAt, "USD"),
-    marketCap: liveNumber(row, "marketCap", fetchedAt, "USD"),
-    pe: liveNumber(row, "pe", fetchedAt, "x"),
-    pb: liveNumber(row, "pb", fetchedAt, "x"),
-    ps: liveNumber(row, "ps", fetchedAt, "x"),
+    price: liveNumber(row, "price", "USD"),
+    marketCap: liveNumber(row, "marketCap", "USD"),
+    pe: liveNumber(row, "pe", "x"),
+    pb: liveNumber(row, "pb", "x"),
+    ps: liveNumber(row, "ps", "x"),
     netMargin: liveRatio(row, "netMargin"),
     returnOnEquity: liveRatio(row, "returnOnEquity"),
   };
@@ -81,23 +80,25 @@ export function unavailablePeersResponse(
   resolved: ResolvedSecurity,
   reason: string,
 ): PeersResponse {
-  const missing = (unit: string) => metric<number>(null, "derived", { reason, unit });
+  const missing = (unit?: string) => metric<number>(null, "derived", { reason, ...(unit ? { unit } : {}) });
   return {
     symbol: resolved.symbol,
     marketCode: resolved.marketCode,
     peers: [],
     medians: { pe: missing("x"), pb: missing("x"), ps: missing("x") },
-    peerValue: missing("USD"),
+    peerValue: missing(),
     selectionReason: reason,
     source: "live",
-    asOf: new Date().toISOString(),
+    asOf: null,
   };
 }
 
 async function fetchTargetRow(resolved: ResolvedSecurity): Promise<NormalizedSnapshotRow> {
   const payload = await fetchAInvest("snapshot", buildSecuritySnapshotRequest(resolved.marketCode));
   const row = normalizeSnapshot(payload).rows[0];
-  if (!row) throw new Error("The market data service returned no security row.");
+  if (!row || row.symbolCode !== resolved.marketCode) {
+    throw new Error("The market data service returned no matching security row.");
+  }
   return row;
 }
 
@@ -162,8 +163,20 @@ export async function getPeersResponse(
   if (selectedRows.length === 0) {
     throw new Error("No supported comparable peers were returned.");
   }
-  const fetchedAt = new Date().toISOString();
-  const peers = selectedRows.map((row) => peerFromRow(row, fetchedAt));
+  const peers = selectedRows.map(peerFromRow);
+  const asOf = peers
+    .flatMap((peer) => [
+      peer.price.asOf,
+      peer.marketCap.asOf,
+      peer.pe.asOf,
+      peer.pb.asOf,
+      peer.ps.asOf,
+      peer.netMargin.asOf,
+      peer.returnOnEquity.asOf,
+    ])
+    .filter((value): value is string => value != null)
+    .sort()
+    .at(-1) ?? null;
   const medianPe = medianPositive(
     peers.map((peer) => peer.pe.value),
     MINIMUM_PEER_SAMPLE,
@@ -187,7 +200,7 @@ export async function getPeersResponse(
   });
   const medianMetric = (value: number | null) =>
     metric(value, "derived", {
-      asOf: fetchedAt,
+      asOf,
       unit: "x",
       reason:
         value === null
@@ -202,7 +215,7 @@ export async function getPeersResponse(
   const selectionReasons = [
     ...(usedBroaderSectorGroup
       ? [
-          `The industry peer set did not provide enough ${coverageLabel}, so the displayed set also includes companies from the broader provider sector group.`,
+          `The industry peer set did not provide enough ${coverageLabel}, so the displayed set also includes companies from the broader sector group.`,
         ]
       : []),
     ...(!hasCoverage
@@ -221,8 +234,7 @@ export async function getPeersResponse(
       ps: medianMetric(medianPs),
     },
     peerValue: metric(peerValue, "derived", {
-      asOf: fetchedAt,
-      unit: "USD",
+      asOf,
       reason:
         peerValue === null
           ? `A peer valuation requires target multiples and at least ${MINIMUM_PEER_SAMPLE} positive peer observations for the displayed measures.`
@@ -232,6 +244,6 @@ export async function getPeersResponse(
       ? { selectionReason: selectionReasons.join(" ") }
       : {}),
     source: "live",
-    asOf: fetchedAt,
+    asOf,
   };
 }

@@ -26,9 +26,15 @@ export async function GET(
         { status: 404 },
       );
     }
-    return jsonResponse(await getSeriesResponse(resolved, query.group, query.range), {
-      cacheControl: "public, max-age=60, stale-while-revalidate=240",
-    });
+    return jsonResponse(
+      await getSeriesResponse(resolved, query.group, query.range, {
+        before: query.before,
+        limit: query.limit,
+      }),
+      {
+        cacheControl: "no-store",
+      },
+    );
   } catch (error) {
     return routeError(error);
   }

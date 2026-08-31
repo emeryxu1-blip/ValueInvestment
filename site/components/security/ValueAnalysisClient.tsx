@@ -15,6 +15,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import {
@@ -56,16 +57,20 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const money = (
   value: number | null,
-  currency = "USD",
+  currency: string | null,
   compact = false,
 ) => {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    notation: compact ? "compact" : "standard",
-    maximumFractionDigits: compact ? 2 : 2,
-  }).format(value);
+  if (value === null || !Number.isFinite(value) || !currency) return "—";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: compact ? "compact" : "standard",
+      maximumFractionDigits: compact ? 2 : 2,
+    }).format(value);
+  } catch {
+    return "—";
+  }
 };
 
 const percent = (value: number | null, digits = 1) =>
@@ -81,7 +86,7 @@ const multiple = (value: number | null) =>
 const peerMetric = (peer: AnalysisPeer, key: string) =>
   metricNumber(peer.metrics, key);
 
-const compactNumber = (value: number | null, currency = "USD") =>
+const compactNumber = (value: number | null, currency: string | null) =>
   money(value, currency, true);
 
 const asOfDate = (value: string | null | undefined) =>
@@ -109,6 +114,7 @@ export default function ValueAnalysisClient({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const view =
     mode === "cash-flow-value" ? "dcf-valuation" : "relative-valuation";
@@ -116,21 +122,25 @@ export default function ValueAnalysisClient({
 
   const load = useCallback(
     async (background = false) => {
+      const requestId = ++requestIdRef.current;
       if (background) setRefreshing(true);
       else setLoading(true);
       try {
         const next = await fetch(analysisPath, { cache: "no-store" }).then(
           responseJson,
         );
+        if (requestId !== requestIdRef.current) return;
         setData(next);
         setError(null);
       } catch (reason) {
+        if (requestId !== requestIdRef.current) return;
         setError(
           reason instanceof Error
             ? reason.message
             : "The latest analysis is temporarily unavailable.",
         );
       } finally {
+        if (requestId !== requestIdRef.current) return;
         setLoading(false);
         setRefreshing(false);
       }
@@ -164,7 +174,7 @@ export default function ValueAnalysisClient({
         eyebrow: "Cash-flow safety",
         title: "Cash-flow value check",
         description:
-          "Review the provider DCF estimate against reported and forecast free cash flow, then compare the resulting value with today's price.",
+          "Review the DCF reference against reported and forecast free cash flow, then compare the resulting value with today's price.",
       }
     : {
         view: "market-expectations" as const,
@@ -261,10 +271,10 @@ export default function ValueAnalysisClient({
             <p>
               Estimated value{" "}
               <strong>
-                {money(baseValue, data?.identity.currency ?? "USD")}
+                {money(baseValue, data?.identity.currency || null)}
               </strong>{" "}
               compared with a market price of{" "}
-              <strong>{money(price, data?.identity.currency ?? "USD")}</strong>.
+              <strong>{money(price, data?.identity.currency || null)}</strong>.
             </p>
           </div>
           <div className={`analysis-gap${gap === null ? "" : gap >= 0 ? " is-positive" : " is-negative"}`}>
@@ -281,11 +291,11 @@ export default function ValueAnalysisClient({
         {isCashFlowView ? (
           <CalculationDisclosure
             title="How the headline is built"
-            summary="Implied value gap = selected provider DCF per share ÷ analysis price − 1"
+            summary="Implied value gap = Intrinsic value per share ÷ positive analysis price − 1"
             badges={[
               dcfValuation?.providerValuePeriod
                 ? `Selected ${dcfValuation.providerValuePeriod}`
-                : "No positive provider value",
+                : "No positive DCF value",
               dcfValuation?.priceAsOf
                 ? `Price ${asOfDate(dcfValuation.priceAsOf)}`
                 : null,
@@ -293,13 +303,13 @@ export default function ValueAnalysisClient({
             ]}
             formulas={[
               {
-                label: "Provider value",
+                label: "DCF value",
                 expression:
-                  "positive value attached to the latest date in the provider DCF series",
+                  "latest positive dated DCF output from the server calculation",
               },
               {
                 label: "Value gap",
-                expression: "provider DCF per share / positive analysis price - 1",
+                expression: "Intrinsic value per share / positive analysis price - 1",
               },
               {
                 label: "Reading",
@@ -309,9 +319,9 @@ export default function ValueAnalysisClient({
             ]}
             items={[
               {
-                label: "Critical limitation",
+                label: "Calculation",
                 value:
-                  "The provider feed does not include its cash-flow forecast, discount rate, terminal-growth rate, terminal value, forecast horizon, or per-share bridge. This DCF cannot be independently reproduced from the returned inputs.",
+                  "The server returns the DCF value; the browser does not recalculate it.",
               },
               {
                 label: "Price snapshot",
@@ -361,7 +371,7 @@ export default function ValueAnalysisClient({
               {
                 label: "Periods",
                 value:
-                  "P/E and P/S use trailing-twelve-month provider multiples; P/B uses the latest reported-quarter multiple.",
+                  "P/E and P/S use trailing-twelve-month multiples; P/B uses the latest reported-quarter multiple.",
               },
               {
                 label: "Minimum evidence",
@@ -407,7 +417,7 @@ function CashFlowSections({
   data: SecurityAnalysisResponse | null;
   valuation: DcfAnalysis | null;
 }) {
-  const currency = data?.identity.currency ?? "USD";
+  const currency = data?.identity.currency || null;
   const metrics = data?.metrics;
   const cashFlow = valuation?.cashFlow;
   const reported = cashFlow?.reported ?? [];
@@ -433,11 +443,11 @@ function CashFlowSections({
             <BarChart3 aria-hidden="true" />
           </div>
           <div>
-            <p className="analysis-label">Provider cash-flow evidence</p>
+            <p className="analysis-label">Cash-flow evidence</p>
             <h2 id="cash-flow-model">Reported and forecast free cash flow</h2>
             <p>
               Reported periods and forward estimates come from a separate
-              provider series. The totals below use the returned ordering;
+              reported and forecast series. The totals below use the returned ordering;
               unavailable figures remain blank.
             </p>
           </div>
@@ -522,7 +532,7 @@ function CashFlowSections({
                   />
                   <Bar
                     dataKey="forecast"
-                    name="Provider forecast"
+                    name="Forecast free cash flow"
                     fill="#9cc9f6"
                     radius={[6, 6, 0, 0]}
                   />
@@ -530,7 +540,7 @@ function CashFlowSections({
               </ResponsiveContainer>
             </div>
           ) : (
-            <EmptyAnalysis message="The provider did not return reported or forecast free cash-flow periods for this security." />
+            <EmptyAnalysis message="No reported or forecast free-cash-flow periods are available for this security." />
           )}
         </div>
         <CalculationDisclosure
@@ -568,9 +578,9 @@ function CashFlowSections({
                 "The app sorts by returned period but does not currently prove quarter continuity or that every forecast date is in the future; labels therefore say returned periods.",
             },
             {
-              label: "Not a DCF input",
+              label: "Supporting cash-flow evidence",
               value:
-                "This FCF series supports diligence but is not used by the app to calculate or reproduce the provider DCF result.",
+                "This FCF series supports diligence; the DCF analysis value is calculated separately on the server and is not reconstructed from this chart in the browser.",
             },
           ]}
         />
@@ -582,19 +592,19 @@ function CashFlowSections({
             <Calculator aria-hidden="true" />
           </div>
           <div>
-            <p className="analysis-label">Provider valuation</p>
-            <h2 id="calculation-bridge">Provider DCF versus the market</h2>
+            <p className="analysis-label">DCF value</p>
+            <h2 id="calculation-bridge">DCF value versus the market</h2>
             <p>
-              The DCF value is the provider&apos;s per-share result. Current
-              price is compared with it. Cash, debt, and shares are context
-              only; the app does not reconcile them into the provider result.
+              The server returns the DCF value from the
+              latest fundamentals and compares it with the current price. Cash, debt,
+              and shares are part of the disclosed equity bridge; the browser only formats it.
             </p>
           </div>
         </div>
         {valuation?.providerValue !== null && valuation ? (
           <div className="analysis-bridge">
             <BridgeRow
-              label="Provider DCF value per share"
+              label="DCF value per share"
               value={valuation.providerValue}
               currency={currency}
               result
@@ -627,17 +637,17 @@ function CashFlowSections({
             </div>
           </div>
         ) : (
-          <EmptyAnalysis message="The provider did not return a current DCF value for this security." />
+          <EmptyAnalysis message="The DCF reference is unavailable for this security." />
         )}
         <CalculationDisclosure
-          title="Provider value and context"
-          summary="Latest-dated positive provider DCF ÷ analysis price − 1"
+          title="DCF value calculation"
+          summary="DCF value per share ÷ analysis price − 1"
           badges={[
             valuation?.providerValuePeriod
               ? `Selected ${valuation.providerValuePeriod}`
               : null,
             valuation?.providerValueAsOf
-              ? `DCF feed ${asOfDate(valuation.providerValueAsOf)}`
+              ? `Reference ${asOfDate(valuation.providerValueAsOf)}`
               : null,
           ]}
           items={[
@@ -645,17 +655,17 @@ function CashFlowSections({
               label: "Selected period",
               value:
                 valuation?.providerValuePeriod ??
-                "No positive provider value was selected.",
+                "The current DCF calculation has no dated forecast period.",
             },
             {
               label: "Context-only rows",
               value:
-                "Cash, debt, and shares are displayed for diligence. They are not added, subtracted, or divided locally to produce the provider DCF per share.",
+                "The DCF value is returned by the server; the browser does not recalculate it.",
             },
             {
               label: "Reproducibility",
               value:
-                "A generic textbook DCF equation would not explain this number because the provider's underlying assumptions and forecast are absent.",
+                "The server performs the calculation; the browser only formats the value and calculates display geometry.",
             },
           ]}
         />
@@ -667,11 +677,11 @@ function CashFlowSections({
             <Target aria-hidden="true" />
           </div>
           <div>
-            <p className="analysis-label">Provider DCF values</p>
-            <h2 id="value-periods-heading">Dated values from the provider module</h2>
+            <p className="analysis-label">DCF reference</p>
+            <h2 id="value-periods-heading">Dated DCF values</h2>
             <p>
-              The provider module can return both past and future-dated
-              per-share DCF periods. They are displayed exactly as returned,
+              The valuation dataset can include dated per-share periods. They are
+              displayed without modification,
               without synthetic downside or upside cases.
             </p>
           </div>
@@ -682,7 +692,7 @@ function CashFlowSections({
               <thead>
                 <tr>
                   <th>Period</th>
-                  <th>Provider DCF value per share</th>
+                  <th>DCF value per share</th>
                 </tr>
               </thead>
               <tbody>
@@ -703,7 +713,7 @@ function CashFlowSections({
             </table>
           </div>
         ) : (
-          <EmptyAnalysis message="Dated provider DCF values are unavailable for this security." />
+          <EmptyAnalysis message="The DCF reference is unavailable for this security." />
         )}
       </section>
 
@@ -736,7 +746,7 @@ function CashFlowSections({
                 {forecast.map((point) => (
                   <tr key={`forecast:${point.period}`}>
                     <td>{point.period}</td>
-                    <td>Provider forecast</td>
+                    <td>Forecast</td>
                     <td>{compactNumber(point.value, currency)}</td>
                   </tr>
                 ))}
@@ -748,35 +758,6 @@ function CashFlowSections({
         )}
       </details>
 
-      <details className="analysis-disclosure">
-        <summary>
-          <span>
-            <CircleDollarSign aria-hidden="true" />
-            Conservative cash-flow questions
-          </span>
-          <ChevronRight aria-hidden="true" />
-        </summary>
-        <div className="analysis-method-copy">
-          <p>
-            <strong>Where do these figures come from?</strong>{" "}
-            The free-cash-flow history and estimates come from one provider
-            series; the DCF value comes from another provider module. The app
-            does not assume the separate FCF series was used in the DCF.
-          </p>
-          <p>
-            <strong>What should I verify?</strong> Forecast free cash flow is an
-            estimate, not reported performance. Reconcile the historical values
-            to filings, check capital expenditure and working-capital timing,
-            and examine whether share dilution changes the per-share result.
-          </p>
-          <p>
-            <strong>How should I use the DCF result?</strong> Treat it as one
-            provider estimate, not certainty. Compare it with the market-based
-            valuation, business quality, balance-sheet risk, and your own review
-            of the provider&apos;s underlying assumptions before acting.
-          </p>
-        </div>
-      </details>
     </>
   );
 }
@@ -788,7 +769,7 @@ function RelativeSections({
   data: SecurityAnalysisResponse | null;
   measures: RelativeMeasure[];
 }) {
-  const currency = data?.identity.currency ?? "USD";
+  const currency = data?.identity.currency || null;
   const valuation = data?.valuation?.kind === "relative" ? data.valuation : null;
   const chartData = measures.map((measure) => ({
     metric: measure.id.toUpperCase(),
@@ -1023,7 +1004,7 @@ function RelativeSections({
             {
               label: "Fallback",
               value:
-                "Start with the provider industry. Expand to the broader sector group when any displayed multiple cannot reach the three-observation minimum.",
+                "Start with the reported industry classification. Expand to the broader sector group when any displayed multiple cannot reach the three-observation minimum.",
             },
           ]}
         />
@@ -1078,7 +1059,7 @@ function BridgeRow({
 }: {
   label: string;
   value: number | null;
-  currency: string;
+  currency?: string | null;
   emphasized?: boolean;
   result?: boolean;
   shares?: boolean;
@@ -1097,8 +1078,8 @@ function BridgeRow({
                 maximumFractionDigits: 2,
               }).format(value)
           : result
-            ? money(value, currency)
-            : compactNumber(value, currency)}
+            ? money(value, currency ?? null)
+            : compactNumber(value, currency ?? null)}
       </strong>
     </div>
   );

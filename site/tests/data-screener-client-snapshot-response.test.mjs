@@ -33,7 +33,7 @@ test("includes the compact endpoint in the screener API rate-limit scope", () =>
   assert.equal(isScreenerApiPath("/api/screener-export"), false);
 });
 
-test("serves schema-three snapshot bytes with shared cache headers", async () => {
+test("serves schema-three snapshot bytes without replay caching", async () => {
   const response = screenerClientSnapshotResponse(
     new Request("https://example.test/api/screener/snapshot"),
     { payloadJson, etag: "generation-1" },
@@ -44,7 +44,7 @@ test("serves schema-three snapshot bytes with shared cache headers", async () =>
   assert.equal(response.headers.get("etag"), '"generation-1"');
   assert.equal(
     response.headers.get("cache-control"),
-    "public, max-age=300, s-maxage=300",
+    "no-store",
   );
   assert.equal(
     response.headers.get("content-type"),
@@ -85,17 +85,15 @@ test("keeps unavailable snapshots out of shared caches", async () => {
   assert.equal((await response.json()).code, "SNAPSHOT_UNAVAILABLE");
 });
 
-test("serves repeated snapshot loads from the edge cache without another origin read", async () => {
-  const entries = new Map();
+test("revalidates every snapshot load against the current origin generation", async () => {
   const cache = {
-    async match(request) {
-      return entries.get(request.url)?.clone();
+    async match() {
+      assert.fail("the numeric snapshot must not be served from an edge body cache");
     },
-    async put(request, response) {
-      entries.set(request.url, response.clone());
+    async put() {
+      assert.fail("the numeric snapshot must not be written to an edge body cache");
     },
   };
-  const pending = [];
   let originReads = 0;
   const load = (request) =>
     cachedScreenerSnapshotResponse(request, {
@@ -107,8 +105,8 @@ test("serves repeated snapshot loads from the edge cache without another origin 
           etag: "generation-1",
         });
       },
-      waitUntil(promise) {
-        pending.push(promise);
+      waitUntil() {
+        assert.fail("the numeric snapshot must not schedule an edge cache write");
       },
     });
 
@@ -117,15 +115,13 @@ test("serves repeated snapshot loads from the edge cache without another origin 
   );
   const first = await load(firstRequest);
   assert.equal(first.status, 200);
-  await Promise.all(pending.splice(0));
-
   const secondRequest = new Request(
     "https://example.test/api/screener/snapshot?ignored=second",
   );
   const second = await load(secondRequest);
   assert.equal(second.status, 200);
   assert.equal(await second.text(), payloadJson);
-  assert.equal(originReads, 1);
+  assert.equal(originReads, 2);
   assert.equal(
     screenerSnapshotCacheKey(firstRequest).url,
     screenerSnapshotCacheKey(secondRequest).url,
@@ -137,7 +133,7 @@ test("serves repeated snapshot loads from the edge cache without another origin 
     }),
   );
   assert.equal(conditional.status, 304);
-  assert.equal(originReads, 1);
+  assert.equal(originReads, 3);
 });
 
 test("does not edge-cache an unavailable snapshot response", async () => {

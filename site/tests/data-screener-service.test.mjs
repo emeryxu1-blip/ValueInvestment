@@ -601,9 +601,12 @@ test("maps a reordered historical module into screener margin metrics", () => {
       ],
     },
   }).rows[0];
-  const row = screenerRowFromSnapshot(normalized, "2026-08-10T00:00:00.000Z");
+  const row = screenerRowFromSnapshot(normalized);
 
   assert.equal(row.company.value, "Microsoft");
+  assert.equal(row.currency, "USD");
+  assert.equal(row.price.unit, "USD");
+  assert.equal(row.marketCap.unit, "USD");
   assert.equal(row.returnOnInvestedCapital.value, 15);
   assert.equal(row.returnOnInvestedCapital.unit, "%");
   assert.equal(row.operatingMarginStable5Y.value, true);
@@ -611,36 +614,24 @@ test("maps a reordered historical module into screener margin metrics", () => {
   assert.equal(row.operatingMarginsExpanding5Y.value, true);
 });
 
-test("does not publish a nonpositive latest provider DCF as screener fair value", () => {
+test("uses the latest positive AInvest DCF prediction for screener fair value", () => {
   const normalized = normalizeSnapshot({
     data: {
       indicator: [
         { id: "price", req_unique_id: "price" },
-        { id: "dcf", req_unique_id: "fairValueModule" },
+        { id: "stockdiag_fundamental_value_dcf", req_unique_id: "fairValueModule" },
       ],
-      data: [
-        {
-          symbol_code: "185:MSFT",
-          value: [
-            { v: 100 },
-            {
-              v: {
-                predicted_prices: [
-                  ["20251231", 120],
-                  ["20261231", 0],
-                ],
-              },
-            },
-          ],
-        },
-      ],
+      data: [{
+        symbol_code: "185:MSFT",
+        value: [
+          { v: 100 },
+          { v: { predicted_prices: [["20261231", 150], ["20271231", 162.5]] } },
+        ],
+      }],
     },
   }).rows[0];
-
-  const row = screenerRowFromSnapshot(
-    normalized,
-    "2026-08-10T00:00:00.000Z",
-  );
-  assert.equal(row.fairValue.value, null);
-  assert.equal(row.mispricing.value, null);
+  const row = screenerRowFromSnapshot(normalized);
+  assert.equal(row.fairValue.value, 162.5);
+  assert.equal(row.fairValue.unit, "USD");
+  assert.ok(Math.abs(row.mispricing.value - 0.625) < 1e-12);
 });

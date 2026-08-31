@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     template: "%s · Value Lens",
   },
   description:
-    "Find value opportunities with a margin of safety, then test owner earnings, financial resilience, market expectations, and business quality.",
+    "Find value opportunities with a margin of safety, then test intrinsic-value evidence, financial resilience, market expectations, and business quality.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Value Lens — Find value opportunities",
     description:
-      "Screen for a margin of safety, then test owner earnings, market expectations, and business quality.",
+      "Screen for a margin of safety, then test intrinsic-value evidence, market expectations, and business quality.",
     images: ["/og-value-lens.png"],
   },
 };

@@ -149,13 +149,13 @@ test("renders the complete screener content without copied site chrome or paywal
     withoutCompanyLogoHost(html),
     /Historical margin consistency isn’t supported yet|Margin-trend filtering isn’t supported yet|availability-pill[^>]*>Unavailable/i,
   );
-  assert.match(html, /Provider DCF at least matches price/);
-  assert.match(html, /Positive provider DCF ÷ positive price ≥ 1\.0×/);
+  assert.match(html, /DCF value at least matches price/);
+  assert.match(html, /Positive DCF value ÷ positive price ≥ 1\.0×/);
   assert.match(html, /class="filter-option__title"/);
   assert.match(html, /class="filter-option__terms"/);
   assert.doesNotMatch(
     html,
-    /Meaningful provider value gap|Profitable at a low multiple|Strong cash-flow yield|Low enterprise-value multiple|Earnings convert into cash|High returns on capital|Debt covered by cash flow/,
+    /Meaningful DCF value gap|Profitable at a low multiple|Strong cash-flow yield|Low enterprise-value multiple|Earnings convert into cash|High returns on capital|Debt covered by cash flow/,
   );
   assert.match(html, /Screen matches are research candidates, not recommendations/);
   assert.match(html, /Banks, insurers, REITs, utilities, and cyclicals/);
@@ -173,10 +173,10 @@ test("renders the complete screener content without copied site chrome or paywal
   const chipText = chipMarkup.replace(/<[^>]+>/g, "").replaceAll("<!-- -->", "");
   assert.match(chipText, /Largest companies/);
   assert.match(chipText, /Major U\.S\. exchanges/);
-  assert.match(chipText, /Provider DCF at least matches price/);
+  assert.match(chipText, /DCF value at least matches price/);
   assert.doesNotMatch(
     chipText,
-    /Market-cap rank ≤ 1,000|Exchange ∈ \{NYSE, NASDAQ\}|Positive provider DCF ÷ positive price ≥ 1\.0×/,
+    /Market-cap rank ≤ 1,000|Exchange ∈ \{NYSE, NASDAQ\}|Positive DCF value ÷ positive price ≥ 1\.0×/,
   );
   assert.equal(
     (chipMarkup.match(/class="active-filter__category"/g) ?? []).length,

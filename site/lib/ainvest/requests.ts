@@ -22,10 +22,12 @@ export const SCREENER_INDICATORS: IndicatorRequest[] = [
     attr: { trade_class: "intraday", time_period: "day_1" },
   },
   { id: "total_market_value", req_unique_id: "marketCap" },
-  {
-    id: "stockdiag_fundamental_value_dcf",
-    req_unique_id: "fairValueModule",
-  },
+  { id: "stockdiag_fundamental_value_dcf", req_unique_id: "fairValueModule" },
+  { id: "parent_holder_net_profit_ttm", req_unique_id: "netIncome" },
+  { id: "free_cash_flow_ttm", req_unique_id: "freeCashFlow" },
+  { id: "debt", req_unique_id: "debt" },
+  { id: "cash_equivalents_short_term_investments", req_unique_id: "cash" },
+  { id: "total_capital", req_unique_id: "sharesOutstanding" },
   { id: "pe_ttm", req_unique_id: "pe" },
   {
     id: "operating_income_total_ttm_yoy",
@@ -102,14 +104,11 @@ export const SECURITY_INDICATORS: IndicatorRequest[] = [
     attr: { trade_class: "intraday", time_period: "day_1" },
   },
   { id: "total_market_value", req_unique_id: "marketCap" },
+  { id: "stockdiag_fundamental_value_dcf", req_unique_id: "fairValueModule" },
   { id: "employee_number", req_unique_id: "employeeCount" },
   { id: "6", req_unique_id: "previousClose", attr: { trade_class: "intraday" } },
   { id: "8", req_unique_id: "dayHigh", attr: { trade_class: "intraday" } },
   { id: "9", req_unique_id: "dayLow", attr: { trade_class: "intraday" } },
-  {
-    id: "stockdiag_fundamental_value_dcf",
-    req_unique_id: "fairValueModule",
-  },
   { id: "stockdiag_fundamental_past_score", req_unique_id: "pastScore" },
   { id: "stockdiag_fundamental_health_score", req_unique_id: "healthScore" },
   { id: "stockdiag_fundamental_future_score", req_unique_id: "futureScore" },
@@ -125,6 +124,7 @@ export const SECURITY_INDICATORS: IndicatorRequest[] = [
     id: "cash_equivalents_short_term_investments",
     req_unique_id: "cash",
   },
+  { id: "total_capital", req_unique_id: "sharesOutstanding" },
   { id: "annualized_roe", req_unique_id: "roe" },
   {
     id: "sale_net_interest_ratio_ttm",
@@ -353,6 +353,10 @@ const RANGE_COUNTS: Record<string, number> = {
   max: 2000,
 };
 
+// The DCF module is a finite dated valuation snapshot, not a pageable daily
+// time series. Keep its historical slice bounded independently of price bars.
+export const DCF_HISTORY_POINT_LIMIT = 20;
+
 export function pointsForRange(range: string): number {
   return RANGE_COUNTS[range] ?? RANGE_COUNTS["1y"];
 }
@@ -405,7 +409,11 @@ export function buildSeriesRequest(
   };
 }
 
-export function buildMultiKlineRequest(marketCode: string, range: string) {
+export function buildMultiKlineRequest(
+  marketCode: string,
+  range: string,
+  options: { endTime?: number; count?: number } = {},
+) {
   const separator = marketCode.indexOf(":");
   const market = separator >= 0 ? marketCode.slice(0, separator) : "";
   const code = separator >= 0 ? marketCode.slice(separator + 1) : marketCode;
@@ -414,8 +422,8 @@ export function buildMultiKlineRequest(marketCode: string, range: string) {
     trade_class: "intraday",
     time_period: "day_1",
     time_range: {
-      count: Math.min(2000, pointsForRange(range)),
-      end_time: 0,
+      count: Math.min(2000, Math.max(1, options.count ?? pointsForRange(range))),
+      end_time: options.endTime ?? 0,
     },
     adjust_type: "forward",
   };

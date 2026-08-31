@@ -12,9 +12,11 @@ were market evidence:
 
 | View/component | Removed behavior | Current authoritative source |
 | --- | --- | --- |
-| Overview valuation range | Bear/base/bull values at 80%/100%/120% of one estimate | AInvest DCF, backend peer estimate, and the explicitly selected value |
-| Overview selected value | Unnamed arithmetic average of DCF and peer estimates | AInvest DCF when available; otherwise the backend peer estimate |
-| Cash-flow valuation | Local five-year DCF with fixed 8% growth, 9% discount, and 3% terminal growth | AInvest `stockdiag_fundamental_value_dcf` |
+| Overview valuation range | Bear/base/bull values at 80%/100%/120% of one estimate | current provider DCF value, backend peer estimate, and the explicitly selected value |
+| Overview selected value | Unnamed arithmetic average of DCF and peer estimates | current provider DCF value when available; otherwise the backend peer estimate |
+| Provider DCF reference | Local valuation model | Latest positive prediction from AInvest `fairValueModule`, parsed server-side |
+| Overview earnings-power cross-check | Labelled as canonical intrinsic value and selected ahead of provider DCF | Separately labelled no-growth earnings-power floor; never selected ahead of an available provider DCF value |
+| Overview valuation chart | One current local value dated with quote/server time | Positive provider DCF values by model target period, explicitly not presented as estimate-revision history |
 | Cash-flow evidence | Browser projections and sensitivity cells | AInvest `stockdiag_fundamental_future_growthforecast`, normalized and aggregated by the backend |
 | Market comparison | Mean of implied values using provider per-share fields that could mismatch a share class | Backend median of positive implied values using current price divided by the matching company P/E, P/S, or P/B |
 | Market-comparison label | Browser-recalculated gap and opportunity label | Canonical backend valuation response |
@@ -33,10 +35,15 @@ provider facts:
   exist in each set and trailing four is positive;
 - the app does not infer quarter continuity or future-date status from those
   points, and this separate FCF series is not used locally to reproduce the
-  provider DCF;
+  provider DCF value;
 - dated values from AInvest `predicted_prices` are labelled as provider DCF
   periods, including future-dated periods; they are not presented as an
   estimate-revision history;
+- the no-growth earnings-power floor uses the lower of positive TTM FCF and
+  positive TTM net income, applies a 20% haircut, capitalizes it at a 10%
+  required return with zero growth, adjusts for net cash, and divides by
+  shares; it is a screening cross-check rather than a conventional DCF and
+  does not borrow quote time as its source date;
 - each relative implied value = peer median multiple × (current price ÷ matching
   current company multiple);
 - final relative value = median of available positive implied values;
@@ -92,4 +99,4 @@ not stored in D1. They are recomputed on request, consistent with
 `calculation-ownership.md`. D1 should be added only for an explicit saved-model
 or immutable historical-snapshot feature; such a record must include the market
 code, normalized inputs, source dates, calculation time, method/model version,
-currency, and output.
+currency (AInvest monetary values are USD), and output.

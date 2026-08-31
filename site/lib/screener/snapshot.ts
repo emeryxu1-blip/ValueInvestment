@@ -339,11 +339,10 @@ function rowFromStored(
       payload.asOf.revenueGrowth,
       "%",
     ),
-    netIncome: liveNumber(payload.netIncome, payload.asOf.netIncome, "USD"),
+    netIncome: liveNumber(payload.netIncome, payload.asOf.netIncome),
     freeCashFlow: liveNumber(
       payload.freeCashFlow,
       payload.asOf.freeCashFlow,
-      "USD",
     ),
     debtToEquity: liveNumber(
       payload.debtToEquity,
@@ -360,7 +359,7 @@ function rowFromStored(
       payload.asOf.returnOnInvestedCapital,
       "%",
     ),
-    netDebt: liveNumber(payload.netDebt, payload.asOf.netDebt, "USD"),
+    netDebt: liveNumber(payload.netDebt, payload.asOf.netDebt),
     operatingMarginStable5Y: derivedBoolean(
       payload.operatingMarginStable5Y,
       payload.asOf.operatingMarginStable5Y,
@@ -445,7 +444,7 @@ function clientPayloadFromRows(
       symbol: row.symbol,
       company: row.company.value,
       filterMask: row.filterMask,
-      currency: row.currency,
+      currency: "USD" as const,
       price: finiteOrNull(row.price.value),
       changePercent: finiteOrNull(row.changePercent.value),
       marketCap: finiteOrNull(row.marketCap.value),
@@ -483,8 +482,7 @@ function isValidClientRow(
     (row.company === null ||
       (typeof row.company === "string" && row.company.length > 0)) &&
     isValidFilterMask(row.filterMask, schemaVersion) &&
-    typeof row.currency === "string" &&
-    row.currency.length > 0 &&
+    row.currency === "USD" &&
     isNullableFiniteNumber(row.price) &&
     isNullableFiniteNumber(row.changePercent) &&
     isNullableFiniteNumber(row.marketCap) &&

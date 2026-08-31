@@ -1,4 +1,5 @@
 import type {
+  EarningsPowerMethod,
   FinancialBridge,
   FinancialBridgeRow,
 } from "@/lib/contracts";
@@ -10,6 +11,7 @@ import type {
   SecuritySummary,
   SeriesResponse,
 } from "./types";
+import { normalizeChartPoints } from "../../lib/security/chart-series.ts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -47,9 +49,12 @@ const finiteNumber = (value: unknown): number | null => {
 };
 
 const provenance = (value: unknown, missingSource: Provenance): Provenance =>
-  value === "live" || value === "derived"
+  value === "live" || value === "derived" || value === "unknown"
     ? value
     : missingSource;
+
+const timestamp = (value: unknown): string | null =>
+  typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
 
 export const asMetric = <T extends number | string>(
   value: unknown,
@@ -60,27 +65,25 @@ export const asMetric = <T extends number | string>(
   const expectsNumber = typeof missingValue === "number" || unit !== undefined;
   if (isRecord(value) && "value" in value) {
     const inner = value.value;
-    const parsed =
-      expectsNumber
-        ? finiteNumber(inner)
-        : typeof inner === "string"
-          ? inner
-          : null;
+    const parsed = expectsNumber
+      ? finiteNumber(inner)
+      : typeof inner === "string"
+        ? inner
+        : null;
     return {
       value: parsed as T | null,
       source: provenance(value.source, source),
-      asOf: typeof value.asOf === "string" ? value.asOf : null,
+      asOf: timestamp(value.asOf),
       unit: typeof value.unit === "string" ? value.unit : unit,
       reason: typeof value.reason === "string" ? value.reason : undefined,
     };
   }
 
-  const parsed =
-    expectsNumber
-      ? finiteNumber(value)
-      : typeof value === "string"
-        ? value
-        : null;
+  const parsed = expectsNumber
+    ? finiteNumber(value)
+    : typeof value === "string"
+      ? value
+      : null;
   return {
     value: (parsed ?? missingValue) as T | null,
     source,
@@ -96,7 +99,32 @@ const numberMetric = (
   missingValue: number | null,
   unit?: string,
   source: Provenance = "derived",
-) => asMetric<number>(first(raw, paths), missingValue, source, unit);
+) => {
+  const candidate = first(raw, paths);
+  if (isRecord(candidate) && "value" in candidate) {
+    const inner = finiteNumber(candidate.value);
+    return {
+      value: inner,
+      source: provenance(candidate.source, source),
+      asOf: timestamp(candidate.asOf),
+      unit: typeof candidate.unit === "string" ? candidate.unit : unit,
+      reason:
+        typeof candidate.reason === "string"
+          ? candidate.reason
+          : inner === null
+            ? "Value is unavailable"
+            : undefined,
+    } satisfies Metric<number>;
+  }
+  const parsed = finiteNumber(candidate);
+  return {
+    value: parsed ?? missingValue,
+    source,
+    asOf: null,
+    unit,
+    reason: parsed === null && missingValue === null ? "Value is unavailable" : undefined,
+  } satisfies Metric<number>;
+};
 
 const stringMetric = (
   raw: unknown,
@@ -119,6 +147,29 @@ const cleanPeriods = (value: unknown): FinancialPeriod[] => {
       };
     })
     .filter((item): item is FinancialPeriod => item !== null);
+};
+
+const normalizeEarningsPowerMethod = (value: unknown): EarningsPowerMethod => {
+  const fallback: EarningsPowerMethod = {
+    id: "no-growth-earnings-power-floor",
+    version: "unknown",
+    requiredReturn: 0.1,
+    earningsHaircut: 0.8,
+    terminalGrowth: 0,
+    description:
+      "Conservative no-growth earnings-power screening floor.",
+  };
+  if (!isRecord(value)) return fallback;
+  return {
+    id: "no-growth-earnings-power-floor",
+    version: typeof value.version === "string" ? value.version : fallback.version,
+    requiredReturn: finiteNumber(value.requiredReturn) ?? fallback.requiredReturn,
+    earningsHaircut:
+      finiteNumber(value.earningsHaircut) ?? fallback.earningsHaircut,
+    terminalGrowth: finiteNumber(value.terminalGrowth) ?? fallback.terminalGrowth,
+    description:
+      typeof value.description === "string" ? value.description : fallback.description,
+  };
 };
 
 const cleanFinancialBridge = (value: unknown): FinancialBridge | null => {
@@ -161,6 +212,10 @@ export const providerNeutralText = (value: string): string =>
     .replace(/\b(?:local\s+)?fixture\b/gi, "")
     .replace(/\bmarket feed\b/gi, "market data")
     .replace(/\bsource(?:-native)?\b/gi, "data")
+    .replace(/\bprovider\s+DCF\b/gi, "DCF")
+    .replace(/\bprovider['’]s\s+model\b/gi, "valuation model")
+    .replace(/\bprovider['’]s\b/gi, "data source's")
+    .replace(/\bprovider\b/gi, "data source")
     .replace(/\s+([,.;:!?])/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -171,7 +226,9 @@ export function normalizeSummary(
   symbol: string,
 ): SecuritySummary {
   const raw = unwrap(payload);
-  const missingSource: Provenance = "derived";
+  const missingSource: Provenance = "unknown";
+  const resolvedExchange = typeof exchange === "string" && exchange.trim() ? exchange.trim().toUpperCase() : "";
+  const resolvedSymbol = typeof symbol === "string" && symbol.trim() ? symbol.trim().toUpperCase() : "";
   const identityRaw = first(raw, ["identity"]) ?? raw;
   const quoteRaw = first(raw, ["quote"]) ?? raw;
   const valuationRaw = first(raw, ["valuation"]) ?? raw;
@@ -182,30 +239,40 @@ export function normalizeSummary(
     quoteRaw,
     ["price", "last", "lastPrice", "currentPrice"],
     null,
-    "USD",
+    undefined,
     missingSource,
   );
-  const dcfValue = numberMetric(
-    valuationRaw,
-    ["dcfValue", "dcf", "intrinsicValue"],
-    null,
-    "USD",
-    missingSource,
+  const dcfValue = {
+    ...numberMetric(valuationRaw, ["dcfValue", "intrinsicValue"], null, undefined, missingSource),
+    unit: "USD",
+  };
+  const earningsPowerFloor = {
+    ...numberMetric(valuationRaw, ["earningsPowerFloor", "ownerEarningsValue"], null, undefined, missingSource),
+    unit: "USD",
+  };
+  const earningsPowerMethod = normalizeEarningsPowerMethod(
+    first(valuationRaw, ["earningsPowerMethod"]),
   );
-  const peerValue = numberMetric(
-    valuationRaw,
-    ["peerValue", "relativeValue", "multiplesValue"],
-    null,
-    "USD",
-    missingSource,
-  );
-  const fairValue = numberMetric(
-    valuationRaw,
-    ["fairValue", "baseValue", "value"],
-    null,
-    "USD",
-    missingSource,
-  );
+  const peerValue = {
+    ...numberMetric(
+      valuationRaw,
+      ["peerValue", "relativeValue", "multiplesValue"],
+      null,
+      undefined,
+      missingSource,
+    ),
+    unit: "USD",
+  };
+  const fairValue = {
+    ...numberMetric(
+      valuationRaw,
+      ["fairValue", "baseValue", "value"],
+      null,
+      undefined,
+      missingSource,
+    ),
+    unit: "USD",
+  };
 
   const annual = cleanPeriods(first(raw, ["financials.annual", "annualFinancials", "financials"]));
   const quarterly = cleanPeriods(first(raw, ["financials.quarterly", "quarterlyFinancials"]));
@@ -215,12 +282,13 @@ export function normalizeSummary(
     pe: numberMetric(fundamentalsRaw, ["pe", "priceEarnings", "peRatio"], null, "x", missingSource),
     pb: numberMetric(fundamentalsRaw, ["pb", "priceBook", "pbRatio"], null, "x", missingSource),
     ps: numberMetric(fundamentalsRaw, ["ps", "priceSales", "psRatio"], null, "x", missingSource),
-    eps: numberMetric(fundamentalsRaw, ["eps", "earningsPerShare"], null, "USD", missingSource),
-    revenue: numberMetric(fundamentalsRaw, ["revenue", "totalRevenue"], null, "USD", missingSource),
-    netIncome: numberMetric(fundamentalsRaw, ["netIncome", "income"], null, "USD", missingSource),
-    freeCashFlow: numberMetric(fundamentalsRaw, ["freeCashFlow", "fcf"], null, "USD", missingSource),
-    debt: numberMetric(fundamentalsRaw, ["debt", "totalDebt"], null, "USD", missingSource),
-    cash: numberMetric(fundamentalsRaw, ["cash", "cashAndEquivalents"], null, "USD", missingSource),
+    eps: { ...numberMetric(fundamentalsRaw, ["eps", "earningsPerShare"], null, undefined, missingSource), unit: "USD" },
+    revenue: { ...numberMetric(fundamentalsRaw, ["revenue", "totalRevenue"], null, undefined, missingSource), unit: "USD" },
+    netIncome: { ...numberMetric(fundamentalsRaw, ["netIncome", "income"], null, undefined, missingSource), unit: "USD" },
+    freeCashFlow: { ...numberMetric(fundamentalsRaw, ["freeCashFlow", "fcf"], null, undefined, missingSource), unit: "USD" },
+    debt: { ...numberMetric(fundamentalsRaw, ["debt", "totalDebt"], null, undefined, missingSource), unit: "USD" },
+    cash: { ...numberMetric(fundamentalsRaw, ["cash", "cashAndEquivalents"], null, undefined, missingSource), unit: "USD" },
+    sharesOutstanding: numberMetric(fundamentalsRaw, ["sharesOutstanding", "shares"], null, "shares", missingSource),
     roe: numberMetric(fundamentalsRaw, ["roe", "returnOnEquity"], null, "%", missingSource),
     revenueGrowth: numberMetric(fundamentalsRaw, ["revenueGrowth", "salesGrowth"], null, "%", missingSource),
     earningsGrowth: numberMetric(fundamentalsRaw, ["earningsGrowth", "epsGrowth"], null, "%", missingSource),
@@ -234,43 +302,52 @@ export function normalizeSummary(
   return {
     applicability: {
       companyAnalysis:
-        !isRecord(applicabilityRaw) ||
-        applicabilityRaw.companyAnalysis !== false,
+        !isRecord(applicabilityRaw) || applicabilityRaw.companyAnalysis !== false,
       securityType:
-        isRecord(applicabilityRaw) &&
-        typeof applicabilityRaw.securityType === "string"
+        isRecord(applicabilityRaw) && typeof applicabilityRaw.securityType === "string"
           ? applicabilityRaw.securityType
           : "",
       reason:
-        isRecord(applicabilityRaw) &&
-        typeof applicabilityRaw.reason === "string"
+        isRecord(applicabilityRaw) && typeof applicabilityRaw.reason === "string"
           ? applicabilityRaw.reason
           : null,
     },
     identity: {
       marketCode: String(first(identityRaw, ["marketCode", "market_code"]) ?? ""),
-      exchange: String(first(identityRaw, ["exchange"]) ?? exchange).toUpperCase(),
-      symbol: String(first(identityRaw, ["symbol", "ticker"]) ?? symbol).toUpperCase(),
-      company: stringMetric(identityRaw, ["company", "name", "companyName"], symbol.toUpperCase(), missingSource),
+      exchange: (() => {
+        const value = first(identityRaw, ["exchange"]);
+        return typeof value === "string" && value.trim() ? value.trim().toUpperCase() : resolvedExchange;
+      })(),
+      symbol: (() => {
+        const value = first(identityRaw, ["symbol", "ticker"]);
+        return typeof value === "string" && value.trim() ? value.trim().toUpperCase() : resolvedSymbol;
+      })(),
+      company: stringMetric(identityRaw, ["company", "name", "companyName"], null, missingSource),
       description: stringMetric(identityRaw, ["description", "profile", "summary"], null, missingSource),
       sector: stringMetric(identityRaw, ["sector"], null, missingSource),
       industry: stringMetric(identityRaw, ["industry"], null, missingSource),
       country: stringMetric(identityRaw, ["country"], null, missingSource),
-      currency: String(first(identityRaw, ["currency"]) ?? "USD"),
+      currency: "USD",
     },
     quote: {
-      price,
+      price: { ...price, unit: price.unit ?? "USD" },
       changePercent: numberMetric(quoteRaw, ["changePercent", "change", "dailyChange"], null, "%", missingSource),
-      marketCap: numberMetric(quoteRaw, ["marketCap", "marketCapitalization"], null, "USD", missingSource),
-      previousClose: numberMetric(quoteRaw, ["previousClose", "prevClose"], null, "USD", missingSource),
-      dayHigh: numberMetric(quoteRaw, ["dayHigh", "high"], null, "USD", missingSource),
-      dayLow: numberMetric(quoteRaw, ["dayLow", "low"], null, "USD", missingSource),
+      marketCap: { ...numberMetric(quoteRaw, ["marketCap", "marketCapitalization"], null, undefined, missingSource), unit: "USD" },
+      previousClose: { ...numberMetric(quoteRaw, ["previousClose", "prevClose"], null, undefined, missingSource), unit: "USD" },
+      dayHigh: { ...numberMetric(quoteRaw, ["dayHigh", "high"], null, undefined, missingSource), unit: "USD" },
+      dayLow: { ...numberMetric(quoteRaw, ["dayLow", "low"], null, undefined, missingSource), unit: "USD" },
     },
     valuation: {
       dcfValue,
+      dcfModelPeriod:
+        typeof first(valuationRaw, ["dcfModelPeriod"]) === "string"
+          ? String(first(valuationRaw, ["dcfModelPeriod"]))
+          : null,
+      earningsPowerFloor,
       peerValue,
       fairValue,
       mispricing: numberMetric(valuationRaw, ["mispricing", "upside", "marginOfSafety"], null, "ratio", missingSource),
+      earningsPowerMethod,
     },
     scores: {
       past: numberMetric(scoreRaw, ["past", "pastScore"], null, "score", missingSource),
@@ -278,64 +355,61 @@ export function normalizeSummary(
       future: numberMetric(scoreRaw, ["future", "futureScore"], null, "score", missingSource),
     },
     fundamentals,
-    financials: {
-      annual,
-      quarterly,
-    },
+    financials: { annual, quarterly },
     derived: {
-      netMargin: numberMetric(
-        raw,
-        ["derived.netMargin"],
-        null,
-        "ratio",
-        missingSource,
-      ),
-      freeCashFlowMargin: numberMetric(
-        raw,
-        ["derived.freeCashFlowMargin"],
-        null,
-        "ratio",
-        missingSource,
-      ),
-      cashFlowBridge: cleanFinancialBridge(
-        first(raw, ["derived.cashFlowBridge"]),
-      ),
+      netMargin: numberMetric(raw, ["derived.netMargin"], null, "ratio", missingSource),
+      freeCashFlowMargin: numberMetric(raw, ["derived.freeCashFlowMargin"], null, "ratio", missingSource),
+      cashFlowBridge: cleanFinancialBridge(first(raw, ["derived.cashFlowBridge"])),
     },
     capitalReturns: {
-      dividends: numberMetric(raw, ["capitalReturns.dividends", "dividends"], null, "USD", missingSource),
+      dividends: numberMetric(raw, ["capitalReturns.dividends", "dividends"], null, undefined, missingSource),
       debtToEquity: numberMetric(raw, ["capitalReturns.debtToEquity", "debtToEquity"], null, "x", missingSource),
     },
     narrative: Array.isArray(narrativeValue)
-      ? narrativeValue
-          .filter((item): item is string => typeof item === "string")
-          .map(providerNeutralText)
-          .filter(Boolean)
+      ? narrativeValue.filter((item): item is string => typeof item === "string").map(providerNeutralText).filter(Boolean)
       : [],
     researchPrompts: Array.isArray(promptsValue)
-      ? promptsValue
-          .filter((item): item is string => typeof item === "string")
-          .map(providerNeutralText)
-          .filter(Boolean)
+      ? promptsValue.filter((item): item is string => typeof item === "string").map(providerNeutralText).filter(Boolean)
       : [],
     related: Array.isArray(relatedValue)
       ? relatedValue
           .map((item) => {
-            if (typeof item === "string") {
-              return { exchange, symbol: item };
-            }
+            if (typeof item === "string") return { exchange, symbol: item };
             if (!isRecord(item)) return null;
-            const relatedExchange =
-              typeof item.exchange === "string" ? item.exchange : exchange;
-            return typeof item.symbol === "string"
-              ? { exchange: relatedExchange, symbol: item.symbol }
-              : null;
+            const relatedExchange = typeof item.exchange === "string" ? item.exchange : exchange;
+            return typeof item.symbol === "string" ? { exchange: relatedExchange, symbol: item.symbol } : null;
           })
-          .filter(
-            (item): item is { exchange: string; symbol: string } => item !== null,
-          )
+          .filter((item): item is { exchange: string; symbol: string } => item !== null)
       : [],
     dataMode: "live",
-    asOf: typeof raw.asOf === "string" ? raw.asOf : price.asOf,
+    asOf: typeof raw.asOf === "string" ? raw.asOf : null,
+  };
+}
+
+function normalizeValuationCoverage(value: unknown): SeriesResponse["valuationCoverage"] {
+  if (!isRecord(value)) return undefined;
+  const marketPrice = isRecord(value.marketPrice) ? value.marketPrice : {};
+  const providerDcf = isRecord(value.providerDcf) ? value.providerDcf : null;
+  const stringOrNull = (candidate: unknown) => typeof candidate === "string" ? candidate : null;
+  const integer = (candidate: unknown) => {
+    const parsed = finiteNumber(candidate);
+    return parsed != null && Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  };
+  return {
+    marketPrice: {
+      startTime: stringOrNull(marketPrice.startTime), endTime: stringOrNull(marketPrice.endTime),
+      pointCount: integer(marketPrice.pointCount), limited: marketPrice.limited === true,
+    },
+    providerDcf: providerDcf
+      ? {
+          startTime: stringOrNull(providerDcf.startTime),
+          endTime: stringOrNull(providerDcf.endTime),
+          pointCount: integer(providerDcf.pointCount) ?? 0,
+          sourceAsOf: stringOrNull(providerDcf.sourceAsOf),
+          includesFuturePeriod: providerDcf.includesFuturePeriod === true,
+          isEstimateRevisionHistory: false,
+        }
+      : null,
   };
 }
 
@@ -348,23 +422,31 @@ export function normalizeSeries(payload: unknown, symbol: string): SeriesRespons
           if (!isRecord(line)) return null;
           const rawPoints = line.points ?? line.values ?? [];
           if (!Array.isArray(rawPoints)) return null;
-          const points = rawPoints
-            .map((point) => {
+          const points = normalizeChartPoints(
+            rawPoints.flatMap((point) => {
               if (Array.isArray(point) && point.length >= 2) {
-                const value = finiteNumber(point[1]);
-                return value === null ? null : { time: String(point[0]), value };
+                return [{ time: point[0], value: point[1] }];
               }
-              if (!isRecord(point)) return null;
-              const value = finiteNumber(point.value ?? point.close ?? point.y);
-              const time = point.time ?? point.date ?? point.x;
-              return value === null || time === undefined ? null : { time: String(time), value };
-            })
-            .filter((point): point is { time: string; value: number } => point !== null);
+              if (!isRecord(point)) return [];
+              return [{
+                time: point.time ?? point.date ?? point.x,
+                value: point.value ?? point.close ?? point.y,
+              }];
+            }),
+          );
           return {
             id: String(line.id ?? line.key ?? `series-${index}`),
             label: providerNeutralText(String(line.label ?? line.name ?? line.id ?? `Series ${index + 1}`)),
             unit: typeof line.unit === "string" ? line.unit : undefined,
             points,
+            seriesKind:
+              line.seriesKind === "historical"
+                ? "historical" as const
+                : line.seriesKind === "model-period"
+                    ? "model-period" as const
+                : line.seriesKind === "reference-overlay" || line.seriesKind === "sparse-overlay"
+                  ? "reference-overlay" as const
+                  : undefined,
           };
         })
         .filter((line): line is NonNullable<typeof line> => line !== null)
@@ -373,11 +455,17 @@ export function normalizeSeries(payload: unknown, symbol: string): SeriesRespons
   return {
     symbol: String(raw.symbol ?? symbol).toUpperCase(),
     marketCode: typeof raw.marketCode === "string" ? raw.marketCode : undefined,
-    group: String(raw.group ?? "valuation"),
-    range: String(raw.range ?? "10y"),
+    group: typeof raw.group === "string" ? raw.group : "",
+    range: typeof raw.range === "string" ? raw.range : "",
     series,
-    source: provenance(raw.source, "derived"),
+    source: provenance(raw.source, "unknown"),
     asOf: typeof raw.asOf === "string" ? raw.asOf : null,
+    oldestTime: typeof raw.oldestTime === "string" ? raw.oldestTime : null,
+    newestTime: typeof raw.newestTime === "string" ? raw.newestTime : null,
+    hasMore: raw.hasMore === true,
+    nextCursor: finiteNumber(raw.nextCursor),
+    before: finiteNumber(raw.before),
+    valuationCoverage: normalizeValuationCoverage(raw.valuationCoverage),
   };
 }
 
@@ -395,7 +483,12 @@ export function normalizePeers(payload: unknown, symbol: string): PeersResponse 
           return {
             marketCode: typeof item.marketCode === "string" ? item.marketCode : undefined,
             symbol: peerSymbol,
-            company: String(company ?? item.name ?? peerSymbol),
+            company:
+              typeof company === "string" && company.trim()
+                ? company.trim()
+                : typeof item.name === "string" && item.name.trim()
+                  ? item.name.trim()
+                  : "",
             price: finiteNumber(isRecord(item.price) ? item.price.value : item.price),
             marketCap: finiteNumber(isRecord(item.marketCap) ? item.marketCap.value : item.marketCap),
             pe: finiteNumber(isRecord(item.pe) ? item.pe.value : item.pe),
@@ -418,12 +511,10 @@ export function normalizePeers(payload: unknown, symbol: string): PeersResponse 
       pb: medianNumber(mediansRaw.pb),
       ps: medianNumber(mediansRaw.ps),
     },
-    peerValue: asMetric<number>(raw.peerValue, null, "derived", "USD"),
+    peerValue: asMetric<number>(raw.peerValue, null, "derived"),
     selectionReason:
-      typeof raw.selectionReason === "string"
-        ? providerNeutralText(raw.selectionReason)
-        : undefined,
-    source: provenance(raw.source, "derived"),
+      typeof raw.selectionReason === "string" ? providerNeutralText(raw.selectionReason) : undefined,
+    source: provenance(raw.source, "unknown"),
     asOf: typeof raw.asOf === "string" ? raw.asOf : null,
   };
 }

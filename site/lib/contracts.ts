@@ -1,4 +1,4 @@
-export type MetricSource = "live" | "derived";
+export type MetricSource = "live" | "derived" | "unknown";
 
 export type Metric<T> = {
   value: T | null;
@@ -74,12 +74,12 @@ export type ScreenerRow = {
   operatingMarginsExpanding5Y: Metric<boolean>;
   sector: Metric<string>;
   filterMask: number;
-  currency: string;
+  currency: "USD";
 };
 
 export type ScanProgress = {
   state: "idle" | "warming" | "ready" | "error";
-  scanned: number;
+  scanned: number | null;
   total: number | null;
   startedAt?: string;
   completedAt?: string;
@@ -107,7 +107,7 @@ export type ScreenerResponse = {
     universeRefreshedAt: string;
     refreshedAt: string;
   };
-  asOf: string;
+  asOf: string | null;
   message?: string;
 };
 
@@ -120,7 +120,7 @@ export type SecurityIdentity = {
   sector: Metric<string>;
   industry: Metric<string>;
   country: Metric<string>;
-  currency: string;
+  currency: "USD";
 };
 
 export type FinancialPeriod = {
@@ -142,6 +142,15 @@ export type FinancialBridge = {
   rows: FinancialBridgeRow[];
 };
 
+export type EarningsPowerMethod = {
+  id: "no-growth-earnings-power-floor";
+  version: string;
+  requiredReturn: number;
+  earningsHaircut: number;
+  terminalGrowth: number;
+  description: string;
+};
+
 export type SecuritySummaryResponse = {
   applicability: {
     companyAnalysis: boolean;
@@ -159,9 +168,12 @@ export type SecuritySummaryResponse = {
   };
   valuation: {
     dcfValue: Metric<number>;
+    dcfModelPeriod: string | null;
+    earningsPowerFloor: Metric<number>;
     peerValue: Metric<number>;
     fairValue: Metric<number>;
     mispricing: Metric<number>;
+    earningsPowerMethod: EarningsPowerMethod;
   };
   scores: {
     past: Metric<number>;
@@ -179,6 +191,7 @@ export type SecuritySummaryResponse = {
     debt: Metric<number>;
     cash: Metric<number>;
     roe: Metric<number>;
+    sharesOutstanding: Metric<number>;
     revenueGrowth: Metric<number>;
     earningsGrowth: Metric<number>;
     dividendYield: Metric<number>;
@@ -200,10 +213,22 @@ export type SecuritySummaryResponse = {
   researchPrompts: string[];
   related: Array<{ exchange: string; symbol: string }>;
   dataMode: "live";
-  asOf: string;
+  asOf: string | null;
 };
 
 export type SeriesPoint = { time: string; value: number | null };
+export type ValuationCoverage = {
+  marketPrice: { startTime: string | null; endTime: string | null; pointCount: number | null; limited: boolean };
+  providerDcf: {
+    startTime: string | null;
+    endTime: string | null;
+    pointCount: number;
+    sourceAsOf: string | null;
+    includesFuturePeriod: boolean;
+    isEstimateRevisionHistory: false;
+  } | null;
+};
+
 export type SeriesResponse = {
   symbol: string;
   marketCode: string;
@@ -214,9 +239,16 @@ export type SeriesResponse = {
     label: string;
     unit: string;
     points: SeriesPoint[];
+    seriesKind?: "historical" | "reference-overlay" | "model-period";
   }>;
   source: MetricSource;
-  asOf: string;
+  asOf: string | null;
+  oldestTime?: string | null;
+  newestTime?: string | null;
+  hasMore?: boolean;
+  nextCursor?: number | null;
+  before?: number | null;
+  valuationCoverage?: ValuationCoverage;
   reason?: string;
 };
 
@@ -245,7 +277,7 @@ export type PeersResponse = {
   peerValue: Metric<number>;
   selectionReason?: string;
   source: MetricSource;
-  asOf: string;
+  asOf: string | null;
 };
 
 export type SecurityAnalysisView =
@@ -292,7 +324,7 @@ export type SecurityAnalysisResponse = {
   peers: AnalysisPeer[];
   valuation: import("./security/valuation").SecurityValuation | null;
   peerReason?: string;
-  asOf: string;
+  asOf: string | null;
 };
 
 export type BusinessQualityResponse = {
@@ -309,6 +341,6 @@ export type BusinessQualityResponse = {
     narrative: string;
     selectionReason: string | null;
   };
-  asOf: string;
+  asOf: string | null;
   modelVersion: string;
 };

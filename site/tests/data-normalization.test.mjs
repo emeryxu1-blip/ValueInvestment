@@ -11,6 +11,7 @@ import {
   ratioNumberValue,
   stringValue,
 } from "../lib/ainvest/normalize.ts";
+import { normalizeSeries as normalizeClientSeries } from "../components/security/data.ts";
 
 test("normalizes snapshot cells using returned indicator metadata order", () => {
   const payload = {
@@ -51,7 +52,7 @@ test("normalizes K-line fields by response field id", () => {
           market: "185",
           code: "MSFT",
           data_fields: ["13", "11", "1", "7", "9", "8"],
-          value: [[1000, 420, 1_720_000_000_000, 415, 410, 425]],
+          value: [["1000", "420", "1720000000000", "415", "410", "425"]],
         },
       ],
     },
@@ -59,6 +60,7 @@ test("normalizes K-line fields by response field id", () => {
   assert.equal(normalized[0].marketCode, "185:MSFT");
   assert.deepEqual(normalized[0].points[0], {
     time: "2024-07-03",
+    timestamp: 1_720_000_000_000,
     open: 415,
     high: 425,
     low: 410,
@@ -126,6 +128,18 @@ test("normalizes provider ratio scales to fractions for calculations", () => {
   assert.equal(ratioNumberValue(normalized.rows[0], "fractional"), 0.18);
 });
 
+test("normalizes ratio values marked as percent to fractions", () => {
+  const normalized = normalizeSnapshot({
+    data: {
+      indicator: [
+        { id: "margin", req_unique_id: "margin", attr: { value_type: "ratio", unit: "%" } },
+      ],
+      data: [{ symbol_code: "185:MSFT", value: [{ v: "12.5" }] }],
+    },
+  });
+  assert.equal(ratioNumberValue(normalized.rows[0], "margin"), 0.125);
+});
+
 test("normalizes reordered historical series by req_unique_id", () => {
   const normalized = normalizeSeries({
     data: {
@@ -146,4 +160,57 @@ test("normalizes reordered historical series by req_unique_id", () => {
   });
   assert.equal(normalized[0].values.eps.points[0].value, 11.2);
   assert.equal(normalized[0].values.price.points[0].value, 420.5);
+});
+
+test("normalizes provider model-period valuation metadata", () => {
+  const normalized = normalizeClientSeries({
+    symbol: "NVDA",
+    group: "valuation",
+    valuationCoverage: {
+      marketPrice: {
+        startTime: "2025-01-01",
+        endTime: "2025-06-30",
+        pointCount: 3,
+        limited: false,
+      },
+      providerDcf: {
+        startTime: "2025-12-31",
+        endTime: "2026-12-31",
+        pointCount: 6,
+        sourceAsOf: "2026-08-28T00:00:00Z",
+        includesFuturePeriod: true,
+        isEstimateRevisionHistory: false,
+      },
+    },
+    series: [
+      { id: "price", label: "Market price", points: [{ time: "2025-06-30", value: 100 }], seriesKind: "historical" },
+      { id: "dcf", label: "DCF value", unit: "USD", points: [{ time: "2026-12-31", value: 150 }], seriesKind: "model-period" },
+    ],
+  }, "NVDA");
+  assert.equal(normalized.series[1].seriesKind, "model-period");
+  assert.equal(normalized.valuationCoverage?.providerDcf?.pointCount, 6);
+});
+
+test("normalizes compact K-line dates without treating them as epoch seconds", () => {
+  const normalized = normalizeKline({
+    data: {
+      quote_data: [
+        {
+          market: "185",
+          code: "MSFT",
+          data_fields: ["1", "11"],
+          value: [["20240131", "410.25"]],
+        },
+      ],
+    },
+  });
+  assert.deepEqual(normalized[0].points[0], {
+    time: "2024-01-31",
+    timestamp: 1706659200000,
+    open: null,
+    high: null,
+    low: null,
+    close: 410.25,
+    volume: null,
+  });
 });

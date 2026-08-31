@@ -55,16 +55,37 @@ test("uses only positive finite peer multiples and per-share fundamentals", () =
   assert.equal(peerValue, 140);
 });
 
-test("extracts the newest DCF prediction and sorts historical points", () => {
+test("keeps only positive DCF predictions and selects the latest one", () => {
   const parsed = parseDcfModule({
-    predicted_prices: [["20250331", 110], ["20260331", 135], ["20251231", 125]],
+    predicted_prices: [
+      ["20250331", 110],
+      ["20260331", 135],
+      ["20261231", 0],
+      ["20271231", -10],
+      ["20251231", 125],
+    ],
     history_prices: [["20250201", 98], ["20250101", 95]],
     latest_qfq_price: 99,
   });
   assert.equal(parsed.fairValue, 135);
+  assert.equal(parsed.fairValuePeriod, "2026-03-31");
+  assert.deepEqual(parsed.predicted, [
+    ["20260331", 135],
+    ["20251231", 125],
+    ["20250331", 110],
+  ]);
   assert.deepEqual(parsed.history, [["20250101", 95], ["20250201", 98]]);
   assert.equal(parsed.latestAdjustedPrice, 99);
   assert.equal(yyyymmddToIso("20260331"), "2026-03-31");
+});
+
+test("returns no provider DCF value when every prediction is nonpositive", () => {
+  const parsed = parseDcfModule({
+    predicted_prices: [["20261231", 0], ["20251231", -10]],
+  });
+  assert.equal(parsed.fairValue, null);
+  assert.equal(parsed.fairValuePeriod, null);
+  assert.deepEqual(parsed.predicted, []);
 });
 
 test("normalizes reported and forecast quarterly free cash flow", () => {

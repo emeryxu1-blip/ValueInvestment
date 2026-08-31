@@ -11,7 +11,7 @@ export type ProfitabilitySnapshot = {
     exchange: string;
     symbol: string;
     company: string | null;
-    currency: string;
+    currency: "USD";
   };
   quote: {
     price: number | null;
@@ -181,10 +181,7 @@ export function normalizeProfitabilitySnapshot(
         typeof identity.company === "string" && identity.company.trim()
           ? identity.company.trim()
           : null,
-      currency:
-        typeof identity.currency === "string" && identity.currency
-          ? identity.currency
-          : "USD",
+      currency: "USD",
     },
     quote: {
       price: metricNumber(raw, "price"),

@@ -23,13 +23,19 @@ type TooltipValue =
   | ReadonlyArray<number | string>
   | undefined;
 
-const compactMoney = (value: number, currency: string) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
+const compactMoney = (value: number, currency: string | null) => {
+  if (!currency) return "—";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
+  } catch {
+    return "—";
+  }
+};
 
 const axisMoney = (value: number) =>
   new Intl.NumberFormat("en-US", {
@@ -37,7 +43,7 @@ const axisMoney = (value: number) =>
     maximumFractionDigits: 1,
   }).format(value);
 
-const tooltipMoney = (currency: string) => (value: TooltipValue) =>
+const tooltipMoney = (currency: string | null) => (value: TooltipValue) =>
   typeof value === "number" ? compactMoney(value, currency) : String(value ?? "—");
 
 const tooltipPercent = (value: TooltipValue) =>
@@ -48,7 +54,7 @@ export function ProfitabilityTrendChart({
   currency,
 }: {
   points: ProfitabilityPoint[];
-  currency: string;
+  currency: string | null;
 }) {
   const data = useMemo(
     () =>
@@ -110,7 +116,7 @@ export function ProfitabilityTrendChart({
             formatter={(value, name) =>
               name === "Net margin"
                 ? tooltipPercent(value)
-                : tooltipMoney(currency)(value)
+                : tooltipMoney(currency)(value as TooltipValue)
             }
             cursor={{ fill: "rgba(0, 113, 227, 0.035)" }}
             contentStyle={{
@@ -159,7 +165,7 @@ export function EarningsBridge({
   currency,
 }: {
   analysis: BusinessQualityAnalysis;
-  currency: string;
+  currency: string | null;
 }) {
   const bridge = analysis.earningsBridge;
   if (!bridge) {

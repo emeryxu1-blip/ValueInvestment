@@ -69,7 +69,7 @@ export async function getBusinessQualityResponse(
     asOf: [summary.asOf, profitability.asOf, peers.asOf]
       .filter((value): value is string => Boolean(value))
       .sort()
-      .at(-1) ?? new Date().toISOString(),
+      .at(-1) ?? null,
     modelVersion: BUSINESS_QUALITY_MODEL_VERSION,
   };
 }

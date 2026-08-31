@@ -22,13 +22,18 @@ import { catalogEntryForMarketCode, type ResolvedSecurity } from "../market-code
 import {
   deriveMispricing,
   finiteNumber,
-  parseEarningsRevenueModule,
   parseDcfModule,
+  parseEarningsRevenueModule,
 } from "./derivations";
 import { buildCashFlowBridge } from "./bridges";
 import { getPeersResponse, unavailablePeersResponse } from "./peers";
 import { companyAnalysisApplicability } from "./company-analysis-applicability.ts";
+import {
+  calculateEarningsPowerFloor,
+  EARNINGS_POWER_METHOD,
+} from "./intrinsic-value.ts";
 import { positiveNumber } from "./valuation.ts";
+
 
 function unavailable<T>(reason: string, unit?: string): Metric<T> {
   return metric<T>(null, "derived", { reason, unit });
@@ -37,7 +42,6 @@ function unavailable<T>(reason: string, unit?: string): Metric<T> {
 function liveNumber(
   row: NormalizedSnapshotRow,
   id: string,
-  _fetchedAt: string,
   unit?: string,
 ): Metric<number> {
   const value = displayNumberValue(row, id);
@@ -70,15 +74,7 @@ function financialPeriodsFromSeries(payload: unknown): {
   const quarterly = [...byDate.values()]
     .sort((left, right) => left.period.localeCompare(right.period))
     .slice(-12);
-  const latestByYear = new Map<string, FinancialPeriod>();
-  for (const period of quarterly) {
-    const year = period.period.slice(0, 4);
-    latestByYear.set(year, {
-      ...period,
-      period: `Year-end TTM ${year}`,
-    });
-  }
-  return { annual: [...latestByYear.values()].slice(-5), quarterly };
+  return { annual: [], quarterly };
 }
 
 async function fetchFinancials(resolved: ResolvedSecurity) {
@@ -127,9 +123,10 @@ export async function getSecuritySummary(
     buildSecuritySnapshotRequest(resolved.marketCode),
   );
   const row = normalizeSnapshot(payload).rows[0];
-  if (!row) throw new Error("The market data service returned no security row.");
+  if (!row || row.symbolCode !== resolved.marketCode) {
+    throw new Error("The market data service returned no matching security row.");
+  }
 
-  const fetchedAt = new Date().toISOString();
   const moduleFinancials = parseEarningsRevenueModule(
     objectValue(row, "earningsRevenueModule"),
   );
@@ -148,28 +145,56 @@ export async function getSecuritySummary(
   ]);
   const financials =
     moduleFinancials.quarterly.length > 0 ? moduleFinancials : seriesFinancials;
+  const price = numberValue(row, "price");
+  const revenue = numberValue(row, "revenue");
+  const netIncome = numberValue(row, "netIncome");
+  const freeCashFlow = numberValue(row, "freeCashFlow");
+  const cash = numberValue(row, "cash");
+  const debt = numberValue(row, "debt");
+  const sharesOutstanding = numberValue(row, "sharesOutstanding");
   const dcfModule = parseDcfModule(objectValue(row, "fairValueModule"));
   const dcfValue = companyAnalysisSupported
     ? positiveNumber(dcfModule.fairValue)
     : null;
-  const peerValue = companyAnalysisSupported
-    ? positiveNumber(peers.peerValue.value)
+  const earningsPowerCalculation = companyAnalysisSupported
+    ? calculateEarningsPowerFloor({ freeCashFlow, netIncome, cash, debt, sharesOutstanding })
     : null;
+  const earningsPowerFloor = earningsPowerCalculation?.value ?? null;
+  const peerValue = companyAnalysisSupported ? positiveNumber(peers.peerValue.value) : null;
   const fairValue = dcfValue ?? peerValue;
-  const price = numberValue(row, "price");
   const mispricing = deriveMispricing(fairValue, price);
+  const dcfAsOf = row.values.fairValueModule?.asOf ?? null;
+  const earningsPowerInputDates = [
+    row.values.freeCashFlow?.asOf,
+    row.values.netIncome?.asOf,
+    row.values.cash?.asOf,
+    row.values.debt?.asOf,
+    row.values.sharesOutstanding?.asOf,
+  ];
+  const earningsPowerAsOf = earningsPowerInputDates.every(
+    (date): date is string => typeof date === "string",
+  )
+    ? [...earningsPowerInputDates].sort().at(-1) ?? null
+    : null;
+  const selectedValueAsOf = dcfValue != null ? dcfAsOf : peers.asOf;
   const liveCompany = stringValue(row, "company");
   const sector = stringValue(row, "sector");
   const industry = stringValue(row, "industry");
   const description = unavailable<string>(
     "No supported editorial profile is available for this symbol.",
   );
-  const valueMetric = (value: number | null, unit: string, reason: string) =>
-    metric(value, "derived", { asOf: fetchedAt, unit, reason });
+  const valueMetric = (
+    value: number | null,
+    unit: string | undefined,
+    reason: string,
+    asOf: string | null = null,
+  ) =>
+    metric(value, "derived", {
+      asOf,
+      ...(unit ? { unit } : {}),
+      reason,
+    });
   const revenueGrowth = displayNumberValue(row, "revenueGrowth");
-  const revenue = numberValue(row, "revenue");
-  const netIncome = numberValue(row, "netIncome");
-  const freeCashFlow = numberValue(row, "freeCashFlow");
   const netMargin =
     revenue != null && revenue !== 0 && netIncome != null
       ? netIncome / revenue
@@ -194,11 +219,11 @@ export async function getSecuritySummary(
       marketCode: resolved.marketCode,
       exchange: resolved.exchange,
       symbol: resolved.symbol,
-      company: metric(liveCompany ?? resolved.companyName, liveCompany ? "live" : "derived", {
+      company: metric(liveCompany, liveCompany ? "live" : "unknown", {
         asOf: liveCompany ? row.values.company?.asOf ?? null : null,
         ...(!liveCompany
           ? {
-              reason: `Resolved from the ${resolved.catalogAsOf} supported security catalog.`,
+              reason: "Company name is unavailable in the current market data.",
             }
           : {}),
       }),
@@ -210,27 +235,36 @@ export async function getSecuritySummary(
         ? metric(industry, "live", { asOf: row.values.industry?.asOf ?? null })
         : unavailable("Industry is unavailable."),
       country: unavailable<string>(
-        "Issuer domicile is not available from the supported AInvest C-side indicators.",
+        "Issuer domicile is not available from the supported market-data fields.",
       ),
       currency: "USD",
     },
     quote: {
-      price: liveNumber(row, "price", fetchedAt, "USD"),
-      changePercent: liveNumber(row, "changePercent", fetchedAt, "%"),
-      marketCap: liveNumber(row, "marketCap", fetchedAt, "USD"),
-      previousClose: liveNumber(row, "previousClose", fetchedAt, "USD"),
-      dayHigh: liveNumber(row, "dayHigh", fetchedAt, "USD"),
-      dayLow: liveNumber(row, "dayLow", fetchedAt, "USD"),
+      price: liveNumber(row, "price", "USD"),
+      changePercent: liveNumber(row, "changePercent", "%"),
+      marketCap: liveNumber(row, "marketCap", "USD"),
+      previousClose: liveNumber(row, "previousClose", "USD"),
+      dayHigh: liveNumber(row, "dayHigh", "USD"),
+      dayLow: liveNumber(row, "dayLow", "USD"),
     },
     valuation: {
       dcfValue: metric(dcfValue, "live", {
-        asOf: row.values.fairValueModule?.asOf ?? null,
+        asOf: dcfAsOf,
         unit: "USD",
         ...(dcfValue == null
+          ? { reason: companyAnalysisReason ?? "No positive DCF value is available." }
+          : {}),
+      }),
+      dcfModelPeriod: dcfValue == null ? null : dcfModule.fairValuePeriod,
+      earningsPowerFloor: metric(earningsPowerFloor, "derived", {
+        asOf: earningsPowerAsOf,
+        unit: "USD",
+        ...(earningsPowerFloor == null
           ? {
               reason:
                 companyAnalysisReason ??
-                "Market data returned no supported cash-flow value.",
+                earningsPowerCalculation?.reason ??
+                "Earnings-power inputs are unavailable.",
             }
           : {}),
       }),
@@ -240,37 +274,40 @@ export async function getSecuritySummary(
         "USD",
         companyAnalysisReason ??
           (dcfValue != null
-            ? "AInvest cash-flow valuation; the peer estimate is shown separately."
+            ? "DCF value selected; the earnings-power floor and peer estimate are shown separately."
             : peerValue != null
-              ? "Peer-multiple estimate used because AInvest returned no cash-flow valuation."
+              ? "Peer-multiple estimate used because no positive DCF value is available."
               : "No supported valuation was returned."),
+        selectedValueAsOf,
       ),
       mispricing: valueMetric(
         mispricing,
         "ratio",
-        companyAnalysisReason ??
-          "Selected fair value divided by price, minus one.",
+        companyAnalysisReason ?? "Selected fair value divided by price, minus one.",
+        selectedValueAsOf,
       ),
+      earningsPowerMethod: EARNINGS_POWER_METHOD,
     },
     scores: {
-      past: liveNumber(row, "pastScore", fetchedAt, "/10"),
-      health: liveNumber(row, "healthScore", fetchedAt, "/10"),
-      future: liveNumber(row, "futureScore", fetchedAt, "/10"),
+      past: liveNumber(row, "pastScore", "/10"),
+      health: liveNumber(row, "healthScore", "/10"),
+      future: liveNumber(row, "futureScore", "/10"),
     },
     fundamentals: {
-      pe: liveNumber(row, "pe", fetchedAt, "x"),
-      pb: liveNumber(row, "pb", fetchedAt, "x"),
-      ps: liveNumber(row, "ps", fetchedAt, "x"),
-      eps: liveNumber(row, "eps", fetchedAt, "USD"),
-      revenue: liveNumber(row, "revenue", fetchedAt, "USD"),
-      netIncome: liveNumber(row, "netIncome", fetchedAt, "USD"),
-      freeCashFlow: liveNumber(row, "freeCashFlow", fetchedAt, "USD"),
-      debt: liveNumber(row, "debt", fetchedAt, "USD"),
-      cash: liveNumber(row, "cash", fetchedAt, "USD"),
-      roe: liveNumber(row, "roe", fetchedAt, "%"),
-      revenueGrowth: liveNumber(row, "revenueGrowth", fetchedAt, "%"),
-      earningsGrowth: liveNumber(row, "earningsGrowth", fetchedAt, "%"),
-      dividendYield: liveNumber(row, "dividendYield", fetchedAt, "%"),
+      pe: liveNumber(row, "pe", "x"),
+      pb: liveNumber(row, "pb", "x"),
+      ps: liveNumber(row, "ps", "x"),
+      eps: liveNumber(row, "eps"),
+      revenue: liveNumber(row, "revenue"),
+      netIncome: liveNumber(row, "netIncome"),
+      freeCashFlow: liveNumber(row, "freeCashFlow"),
+      debt: liveNumber(row, "debt"),
+      cash: liveNumber(row, "cash"),
+      sharesOutstanding: liveNumber(row, "sharesOutstanding", "shares"),
+      roe: liveNumber(row, "roe", "%"),
+      revenueGrowth: liveNumber(row, "revenueGrowth", "%"),
+      earningsGrowth: liveNumber(row, "earningsGrowth", "%"),
+      dividendYield: liveNumber(row, "dividendYield", "%"),
     },
     financials,
     derived: {
@@ -294,12 +331,11 @@ export async function getSecuritySummary(
     capitalReturns: {
       dividends: metric(latestDividend, "live", {
         asOf: row.values.dividendStabilityModule?.asOf ?? null,
-        unit: "USD/share",
         ...(latestDividend == null
           ? { reason: "A supported annual dividend amount was not returned." }
           : {}),
       }),
-      debtToEquity: liveNumber(row, "debtToEquity", fetchedAt, "%"),
+      debtToEquity: liveNumber(row, "debtToEquity", "%"),
     },
     narrative: metricNarrative({
       symbol: resolved.symbol,
@@ -308,15 +344,20 @@ export async function getSecuritySummary(
       healthScore,
     }),
     researchPrompts: [
-      `What assumptions drive ${resolved.symbol}'s cash-flow value?`,
+      `What assumptions drive ${resolved.symbol}'s DCF value?`,
+      `Why does ${resolved.symbol}'s no-growth earnings-power floor differ from its DCF value?`,
       `Which operating metrics would invalidate the current ${resolved.symbol} valuation?`,
-      `How do ${resolved.symbol}'s positive peer multiples compare with its own?`,
     ],
     related: peers.peers.flatMap((peer) => {
       const catalog = catalogEntryForMarketCode(peer.marketCode);
       return catalog ? [{ exchange: catalog.exchange, symbol: peer.symbol }] : [];
     }),
     dataMode: "live",
-    asOf: fetchedAt,
+    asOf:
+      Object.values(row.values)
+        .map((value) => value.asOf)
+        .filter((value): value is string => value != null)
+        .sort()
+        .at(-1) ?? null,
   };
 }

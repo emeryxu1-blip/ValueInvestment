@@ -37,13 +37,11 @@ flowchart LR
     Worker["Cloudflare Worker\ncustom wrapper"]
     OpenNext["OpenNext Next.js handler\nApp Router and route handlers"]
     Assets["Workers Static Assets\n.open-next/assets"]
-    EdgeCache[("Workers Cache API\ncompact screener payload")]
     D1[("Cloudflare D1\nsaved-screen workspace, Top 1,000 universe,\ndaily run ledger, and screener snapshots")]
     Market["Upstream market-data APIs"]
     Secret["Worker secrets\nAINVEST_USERID and AINVEST_SESSIONID"]
 
     Browser --> Worker
-    Worker --> EdgeCache
     Worker --> OpenNext
     Worker --> Assets
     OpenNext --> D1
@@ -60,7 +58,7 @@ simple and allows mutation routes to reject cross-origin requests.
 | --- | --- | --- |
 | UI and routes | Next.js App Router and React | Screens, React Server Components, client interactions, and route composition |
 | Next.js adapter | `@opennextjs/cloudflare` | Packages the Next.js server as `.open-next/worker.js` and browser assets as `.open-next/assets` |
-| Edge runtime | Cloudflare Worker | Dynamic rendering, API execution, secret access, D1 access, rate limiting, a five-minute compact-snapshot cache, trading-day pre-open refresh, scheduled cleanup and universe refresh, and static-asset dispatch |
+| Edge runtime | Cloudflare Worker | Dynamic rendering, API execution, secret access, D1 access, rate limiting, trading-day pre-open refresh, scheduled cleanup and universe refresh, and static-asset dispatch |
 | Static delivery | Workers Static Assets | Serves the OpenNext asset output from the Worker deployment |
 | API | Next.js route handlers | Security summary, series, peers, valuation analysis, business quality, screener, and saved-screener workspace CRUD |
 | Database | Cloudflare D1 with Drizzle ORM | Anonymous sessions, saved screener definitions, the monthly Top 1,000 universe, immutable screener generations, and the per-trading-date execution ledger |
@@ -111,16 +109,16 @@ is relevant only to the split alternative described below.
    `AINVEST_SESSIONID` Worker secrets to construct the C-side AInvest cookie.
 5. If AInvest rejects the session as expired, the server invalidates that session
    and fails closed; an operator must manually rotate both secrets.
-6. For `/api/screener/snapshot`, the Worker first checks its five-minute Cache
-   API entry. On a miss, the route reads one active generation record from D1
-   and returns its validated compact JSON with a stable ETag. Successful
-   current-schema responses are cached; errors and rollout-bridge responses
-   using the prior filter schema are not. The browser and Worker cache key both
-   include the current schema version. Normal requests do not contact AInvest
-   or read the 1,000 detailed row records. A generation created before compact
+6. For `/api/screener/snapshot`, the route reads one active, integrity-validated
+   generation record from D1 and returns its compact JSON with a stable ETag.
+   The response is `no-store` and the Worker does not maintain an unversioned
+   Cache API body, so a newly published generation cannot be hidden by an old
+   edge entry. Normal requests do not contact AInvest or read the 1,000 detailed
+   row records; every active generation was created by a server-side AInvest
+   refresh and validated before publication. A generation created before compact
    payloads existed is rebuilt once from those stored D1 rows without an
    upstream request. Readers accept filter-mask schemas one through three;
-   only schema-three responses use the current cache key.
+   incompatible controls stay hidden until a compatible generation loads.
 7. The browser downloads that compact validated generation once. Every filter
    has a precomputed membership bit, so filter combinations, sorting, columns,
    pagination, and saved-screen changes are applied locally without another API

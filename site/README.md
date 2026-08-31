@@ -263,11 +263,13 @@ company universe on the last UTC day of every month; the next trading-day
 calculation publishes results for that universe.
 Public screener requests only read an active stored generation; a newly migrated
 empty database remains unavailable until the scheduled refresh or an explicit
-administrative seed publishes one. The compact screener endpoint reads one
-generation record and is cached at the edge for five minutes; error responses
-and prior-schema rollout responses are never cached. Filter-schema versioning
-keeps older stored generations readable while hiding controls that require newer
-source metrics.
+administrative seed publishes one. Every published generation is created by a
+server-side AInvest refresh, validated before activation, and carries its
+calculation timestamp and ETag. The compact screener endpoint revalidates
+against D1 on every request and is `no-store`; it is never served from an
+unversioned edge or checkout-file cache. Filter-schema versioning keeps older
+stored generations readable while hiding controls that require newer source
+metrics.
 
 ## Known production limitations
 
@@ -282,7 +284,7 @@ source metrics.
   to catalog common and depositary equities. ETFs, preferreds, warrants, units,
   rights, and debt receive an explicit unsupported-security response instead of
   a mostly blank corporate model.
-- Current provider-backed DCF values are recomputed when requested. Historical
+- Current provider DCF references are read from AInvest's fair-value module when requested. Historical
   saved valuation runs are not persisted unless a future “Save model” feature
   stores normalized inputs, provenance, and a model version.
 - Anonymous workspaces cannot be recovered or synchronized across devices.

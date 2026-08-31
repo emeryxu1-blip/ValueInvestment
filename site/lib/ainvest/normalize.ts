@@ -5,9 +5,9 @@ export type AInvestIndicatorMeta = {
 };
 
 export type AInvestCell = {
-  t?: number;
+  t?: number | string;
   v?: unknown;
-  value?: Array<{ t?: number; v?: unknown }>;
+  value?: Array<{ t?: number | string; v?: unknown }>;
 };
 
 export type NormalizedValue = {
@@ -25,19 +25,102 @@ export type NormalizedSnapshotRow = {
   values: Record<string, NormalizedValue>;
 };
 
+export type NormalizedSeriesRow = {
+  symbolCode: string;
+  asOf: string | null;
+  values: Record<string, { id: string; points: Array<{ time: string; value: number }> }>;
+};
+
+const MIN_PROVIDER_TIMESTAMP_MS = Date.UTC(1990, 0, 1);
+const MAX_PROVIDER_TIMESTAMP_MS = Date.UTC(2200, 0, 1);
+
 type SnapshotEnvelope = {
   data?: {
     indicator?: AInvestIndicatorMeta[];
     data?: Array<{ symbol_code?: string; value?: AInvestCell[] }>;
     page?: { total?: number };
     symbol_list?: string[];
+    as_of?: unknown;
+    timestamp?: unknown;
   };
 };
 
+function finiteNumeric(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value.replace(/[,$]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function timestampToMilliseconds(timestamp: unknown): number | null {
+  const raw = typeof timestamp === "string" ? timestamp.trim() : timestamp;
+  if (typeof raw === "string" && raw !== "" && !/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(raw)) {
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) && parsed >= MIN_PROVIDER_TIMESTAMP_MS && parsed <= MAX_PROVIDER_TIMESTAMP_MS
+      ? parsed
+      : null;
+  }
+  const numeric = finiteNumeric(raw);
+  if (numeric === null) return null;
+  if (
+    Number.isInteger(numeric) &&
+    numeric >= 10_000_000 &&
+    numeric <= 99_999_999
+  ) {
+    const text = String(numeric);
+    const year = Number(text.slice(0, 4));
+    const month = Number(text.slice(4, 6));
+    const day = Number(text.slice(6, 8));
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    ) {
+      return date.valueOf();
+    }
+    return null;
+  }
+  const milliseconds = Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric;
+  return milliseconds >= MIN_PROVIDER_TIMESTAMP_MS && milliseconds <= MAX_PROVIDER_TIMESTAMP_MS
+    ? milliseconds
+    : null;
+}
+
 function timestampToIso(timestamp: unknown): string | null {
-  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return null;
-  const date = new Date(timestamp);
+  const milliseconds = timestampToMilliseconds(timestamp);
+  if (milliseconds === null) return null;
+  const date = new Date(milliseconds);
   return Number.isNaN(date.valueOf()) ? null : date.toISOString();
+}
+
+function timestampForKline(value: unknown): number | null {
+  const numeric = finiteNumeric(value);
+  if (numeric === null) return null;
+  if (
+    Number.isInteger(numeric) &&
+    numeric >= 10_000_000 &&
+    numeric <= 99_999_999
+  ) {
+    const text = String(numeric);
+    const year = Number(text.slice(0, 4));
+    const month = Number(text.slice(4, 6));
+    const day = Number(text.slice(6, 8));
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+      ? date.valueOf()
+      : null;
+  }
+  const milliseconds = Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : numeric;
+  return milliseconds >= MIN_PROVIDER_TIMESTAMP_MS && milliseconds <= MAX_PROVIDER_TIMESTAMP_MS
+    ? milliseconds
+    : null;
 }
 
 export function normalizeSnapshot(payload: unknown): {
@@ -47,10 +130,13 @@ export function normalizeSnapshot(payload: unknown): {
   indicators: AInvestIndicatorMeta[];
 } {
   const envelope = (payload ?? {}) as SnapshotEnvelope;
-  const indicators = Array.isArray(envelope.data?.indicator)
+  if (!envelope.data || !Array.isArray(envelope.data.data)) {
+    return { rows: [], total: 0, symbolList: [], indicators: [] };
+  }
+  const indicators = Array.isArray(envelope.data.indicator)
     ? envelope.data.indicator
     : [];
-  const data = Array.isArray(envelope.data?.data) ? envelope.data.data : [];
+  const data = envelope.data.data;
   const rows = data.map((rawRow) => {
     const cells = Array.isArray(rawRow.value) ? rawRow.value : [];
     const values: Record<string, NormalizedValue> = {};
@@ -74,7 +160,12 @@ export function normalizeSnapshot(payload: unknown): {
               ? "%"
               : null,
         rawUnit:
-          typeof indicator.attr?.unit === "string" ? indicator.attr.unit : null,
+          typeof indicator.attr?.unit === "string"
+            ? indicator.attr.unit
+            : indicator.attr?.value_type === "ratio" ||
+                indicator.attr?.value_type === "ratio2"
+              ? "%"
+              : null,
       };
     });
     return {
@@ -97,25 +188,28 @@ export function normalizeSnapshot(payload: unknown): {
   };
 }
 
-export function normalizeSeries(payload: unknown): Array<{
-  symbolCode: string;
-  values: Record<string, { id: string; points: Array<{ time: string; value: number | null }> }>;
-}> {
+export function normalizeSeries(payload: unknown): NormalizedSeriesRow[] {
   const envelope = (payload ?? {}) as {
     data?: {
       indicator?: AInvestIndicatorMeta[];
       data?: Array<{ symbol_code?: string; value?: AInvestCell[] }>;
+      as_of?: unknown;
+      timestamp?: unknown;
+      timestamp_ms?: unknown;
     };
   };
   const indicators = Array.isArray(envelope.data?.indicator)
     ? envelope.data.indicator
     : [];
   const rows = Array.isArray(envelope.data?.data) ? envelope.data.data : [];
+  const providerAsOf = timestampToIso(
+    envelope.data?.as_of ?? envelope.data?.timestamp ?? envelope.data?.timestamp_ms,
+  );
   return rows.map((row) => {
     const cells = Array.isArray(row.value) ? row.value : [];
     const values: Record<
       string,
-      { id: string; points: Array<{ time: string; value: number | null }> }
+      { id: string; points: Array<{ time: string; value: number }> }
     > = {};
     indicators.forEach((indicator, index) => {
       const requestId = indicator.req_unique_id || indicator.id || `indicator_${index}`;
@@ -123,18 +217,19 @@ export function normalizeSeries(payload: unknown): Array<{
       values[requestId] = {
         id: indicator.id ?? requestId,
         points: rawPoints
-          .map((point) => ({
-            time: timestampToIso(point.t) ?? "",
-            value:
-              typeof point.v === "number" && Number.isFinite(point.v)
-                ? point.v
-                : null,
-          }))
-          .filter((point) => point.time),
+          .map((point) => {
+            const time = timestampToIso(point.t);
+            const value = finiteNumeric(point.v);
+            return time && value !== null ? { time, value } : null;
+          })
+          .filter(
+            (point): point is { time: string; value: number } => point !== null,
+          ),
       };
     });
     return {
       symbolCode: typeof row.symbol_code === "string" ? row.symbol_code : "",
+      asOf: providerAsOf,
       values,
     };
   });
@@ -144,6 +239,7 @@ export function normalizeKline(payload: unknown): Array<{
   marketCode: string;
   points: Array<{
     time: string;
+    timestamp: number | null;
     open: number | null;
     high: number | null;
     low: number | null;
@@ -169,21 +265,22 @@ export function normalizeKline(payload: unknown): Array<{
     const rows = Array.isArray(quote.value) ? quote.value : [];
     const index = (field: string) => fields.indexOf(field);
     const numberAt = (row: unknown[], field: string) => {
-      const value = row[index(field)];
-      return typeof value === "number" && Number.isFinite(value) ? value : null;
+      const fieldIndex = index(field);
+      return fieldIndex < 0 ? null : finiteNumeric(row[fieldIndex]);
     };
     return {
       marketCode: `${String(quote.market ?? "")}:${String(quote.code ?? "")}`,
       points: rows
         .filter((row): row is unknown[] => Array.isArray(row))
         .map((row) => {
-          const timestamp = numberAt(row, "1");
+          const timestamp = timestampForKline(row[index("1")]);
           const date = timestamp == null ? null : new Date(timestamp);
           return {
             time:
               date && !Number.isNaN(date.valueOf())
                 ? date.toISOString().slice(0, 10)
                 : "",
+            timestamp,
             open: numberAt(row, "7"),
             high: numberAt(row, "8"),
             low: numberAt(row, "9"),
@@ -200,8 +297,7 @@ export function numberValue(
   row: NormalizedSnapshotRow | undefined,
   requestId: string,
 ): number | null {
-  const value = row?.values[requestId]?.value;
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  return finiteNumeric(row?.values[requestId]?.value);
 }
 
 export function displayNumberValue(
@@ -213,7 +309,9 @@ export function displayNumberValue(
   if (raw == null || metadata?.valueType !== "ratio2") return raw;
   if (metadata.rawUnit === "x100") return raw;
   if (metadata.rawUnit === "x1000") return raw / 10;
-  return raw * 100;
+  if (metadata.rawUnit === "%" || metadata.unit === "%") return raw * 100;
+  if (metadata.valueType === "ratio2") return raw * 100;
+  return null;
 }
 
 /**
@@ -235,11 +333,14 @@ export function ratioNumberValue(
   if (metadata?.valueType === "ratio2") {
     if (metadata.rawUnit === "x100") return raw / 100;
     if (metadata.rawUnit === "x1000") return raw / 1000;
+    if (metadata.rawUnit === "%") return raw;
+    if (metadata.unit === "%") return raw;
+    if (metadata.valueType === "ratio2") return raw;
     return raw;
   }
+  if (metadata?.rawUnit === "%" || metadata?.unit === "%") return raw / 100;
   if (metadata?.valueType === "ratio") return raw;
-  if (metadata?.unit === "%") return raw / 100;
-  return Math.abs(raw) > 2 ? raw / 100 : raw;
+  return raw;
 }
 
 export function stringValue(
@@ -272,9 +373,13 @@ export function formatAInvestValue(value: NormalizedValue): string {
           ? value.value
           : value.rawUnit === "x1000"
             ? value.value / 10
-            : value.value * 100
-        : value.value;
-    return `${displayValue}%`;
+            : value.unit === "%"
+              ? value.value * 100
+              : null
+        : value.rawUnit === "%"
+          ? value.value
+          : null;
+    return displayValue === null ? "—" : `${displayValue}%`;
   }
   return String(value.value);
 }

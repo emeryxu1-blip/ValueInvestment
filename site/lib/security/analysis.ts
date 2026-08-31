@@ -40,7 +40,7 @@ function peerFromRow(row: NormalizedSnapshotRow): AnalysisPeer {
     marketCode: row.symbolCode,
     exchange: catalog?.exchange ?? "",
     symbol: catalog?.symbol ?? symbolFromMarketCode(row.symbolCode),
-    company: stringValue(row, "company") ?? catalog?.companyName ?? null,
+    company: stringValue(row, "company") ?? null,
     metrics: analysisMetricsFromRow(row),
   };
 }
@@ -110,7 +110,7 @@ async function getRelativePeers(
   const reasons = [
     ...(usedBroaderSectorGroup
       ? [
-          "The industry peer set was too thin, so the displayed comparables also include companies from the broader provider sector group.",
+          "The industry peer set was too thin, so the displayed comparables also include companies from the broader sector group.",
         ]
       : []),
     ...(!hasCoverage
@@ -154,7 +154,7 @@ export async function getSecurityAnalysis(
       .map((value) => value.asOf)
       .filter((value): value is string => value != null)
       .sort()
-      .at(-1) ?? new Date().toISOString();
+      .at(-1) ?? null;
 
   const response: SecurityAnalysisResponse = {
     view,
@@ -162,7 +162,7 @@ export async function getSecurityAnalysis(
       marketCode: resolved.marketCode,
       exchange: resolved.exchange,
       symbol: resolved.symbol,
-      company: liveCompany ?? resolved.companyName ?? null,
+      company: liveCompany ?? null,
       currency: "USD",
     },
     metrics: analysisMetricsFromRow(row),

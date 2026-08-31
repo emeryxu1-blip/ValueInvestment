@@ -22,6 +22,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -47,23 +48,27 @@ type Props = {
 const qualityPanelHeader = {
   view: "quality" as const,
   eyebrow: "Quality check",
-  title: "Can this business protect and grow owner earnings?",
+  title: "Can this business protect and grow distributable cash?",
   description:
     "Test whether durable margins, disciplined reinvestment, and cash-backed earnings can protect owners through a full business cycle.",
 };
 
 const money = (
   value: number | null,
-  currency = "USD",
+  currency: string | null,
   compact = false,
 ) => {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    notation: compact ? "compact" : "standard",
-    maximumFractionDigits: compact ? 2 : 2,
-  }).format(value);
+  if (value === null || !Number.isFinite(value) || !currency) return "—";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: compact ? "compact" : "standard",
+      maximumFractionDigits: compact ? 2 : 2,
+    }).format(value);
+  } catch {
+    return "—";
+  }
 };
 
 const percent = (value: number | null, digits = 1) =>
@@ -105,26 +110,31 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const qualityPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/business-quality`;
 
   const loadData = useCallback(
     async (background = false) => {
+      const requestId = ++requestIdRef.current;
       if (background) setRefreshing(true);
       else setLoading(true);
       try {
         const payload = (await fetch(qualityPath, {
           cache: "no-store",
         }).then(unwrapResponse)) as BusinessQualityResponse;
+        if (requestId !== requestIdRef.current) return;
         setQuality(payload);
         setError(null);
       } catch (reason) {
+        if (requestId !== requestIdRef.current) return;
         setError(
           reason instanceof Error
             ? reason.message
             : "Business-quality data is temporarily unavailable.",
         );
       } finally {
+        if (requestId !== requestIdRef.current) return;
         setLoading(false);
         setRefreshing(false);
       }
@@ -200,9 +210,9 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
     data.identity.company.value ??
     canonicalSymbol;
   const currency =
-    profitability?.identity.currency ?? data.identity.currency;
+    profitability?.identity.currency || data.identity.currency || null;
   const scoreStyle = {
-    "--quality-score-angle": `${(analysis.score ?? 0) * 3.6}deg`,
+    "--quality-score-angle": analysis.score === null ? "0deg" : `${analysis.score * 3.6}deg`,
   } as CSSProperties;
 
   return (
@@ -317,7 +327,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                 {
                   label: "Labels",
                   expression:
-                    "≥80 Exceptional; ≥65 Strong; ≥50 Resilient; ≥35 Mixed; otherwise Fragile",
+                    "≥80 Exceptional economics; ≥65 Strong economics; ≥50 Resilient economics; ≥35 Mixed economics; otherwise Fragile economics",
                 },
               ]}
               items={[
@@ -384,7 +394,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
           <SectionHeading
             icon={<Gauge aria-hidden="true" />}
             eyebrow="Margins"
-            title="How much revenue becomes owner earnings?"
+            title="How much revenue becomes free cash flow?"
             description="Latest reported totals, paired with annual history when comparable periods are available."
             id="margins-heading"
           />
@@ -503,10 +513,10 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
             summary="Margin = matching profit ÷ revenue · CAGR = (last ÷ first)^(1 ÷ years) − 1"
             badges={[`Profitability feed ${asOfDate(profitability?.asOf)}`]}
             formulas={[
-              { label: "Gross margin", expression: "provider ratio; otherwise gross profit / revenue" },
-              { label: "Operating margin", expression: "direct provider operating-margin ratio" },
-              { label: "Net margin", expression: "provider ratio; otherwise net income / revenue" },
-              { label: "FCF margin", expression: "provider ratio; otherwise free cash flow / revenue" },
+              { label: "Gross margin", expression: "reported ratio; otherwise gross profit / revenue" },
+              { label: "Operating margin", expression: "direct reported operating-margin ratio" },
+              { label: "Net margin", expression: "reported ratio; otherwise net income / revenue" },
+              { label: "FCF margin", expression: "reported ratio; otherwise free cash flow / revenue" },
               { label: "Margin trend", expression: "current net margin - average of up to 3 preceding finite annual margins" },
               { label: "CAGR", expression: "(last positive value / first positive value)^(1 / elapsed years) - 1" },
             ]}
@@ -524,7 +534,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               {
                 label: "Asset turnover",
                 value:
-                  "A direct provider TTM ratio; the app does not reconstruct average assets when the provider value is missing.",
+                  "A direct reported TTM ratio; the app does not reconstruct average assets when the value is missing.",
               },
             ]}
           />
@@ -572,7 +582,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
             icon={<Scale aria-hidden="true" />}
             eyebrow="Peer economics"
             title="Margin and return comparison"
-            description="A comparison using direct trailing-twelve-month profitability ratios from AInvest."
+            description="A comparison using direct trailing-twelve-month profitability ratios from the market dataset."
             id="peer-margin-heading"
           />
           {peerEconomics.length ? (
@@ -606,7 +616,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                       </th>
                       <td>{percent(analysis.netMargin)}</td>
                       <td>{percent(analysis.returnOnEquity)}</td>
-                      <td>AInvest TTM</td>
+                      <td>TTM data</td>
                     </tr>
                     {peerEconomics.map((peer) => (
                       <tr key={peer.symbol}>
@@ -616,7 +626,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                         </th>
                         <td>{percent(peer.netMargin)}</td>
                         <td>{percent(peer.returnOnEquity)}</td>
-                        <td>AInvest TTM</td>
+                        <td>TTM data</td>
                       </tr>
                     ))}
                   </tbody>
@@ -630,8 +640,8 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
                   <>{quality.peerComparison.selectionReason} </>
                 ) : null}
                 Peer net margin and return on equity are direct
-                trailing-twelve-month ratios returned by AInvest. Missing
-                provider values remain blank; no profitability ratios are
+                trailing-twelve-month ratios returned by the market dataset. Missing
+                values remain blank; no profitability ratios are
                 inferred from valuation multiples. Capital structures and
                 accounting differences can still affect comparability.
               </p>
@@ -647,7 +657,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
             summary="Median of each direct TTM ratio when at least 3 peers have that ratio"
             badges={[
               `${peerEconomics.length} selected peers shown`,
-              `Response ${asOfDate(quality.asOf)}`,
+              `Latest input ${asOfDate(quality.asOf)}`,
             ]}
             formulas={[
               {
@@ -674,7 +684,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               {
                 label: "Normalization",
                 value:
-                  "Company and peer TTM ratios use the same provider metadata-aware percent normalization before comparison.",
+                  "Company and peer TTM ratios use the same metadata-aware percent normalization before comparison.",
               },
             ]}
           />
@@ -727,11 +737,11 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
           </div>
           <CalculationDisclosure
             title="Return calculations and provenance"
-            summary="Provider accounting returns · local cash return = free cash flow ÷ enterprise value"
+            summary="Reported accounting returns · local cash return = free cash flow ÷ enterprise value"
             formulas={[
-              { label: "ROE", expression: "provider TTM return on equity (conceptually net income / equity)" },
-              { label: "ROIC", expression: "provider TTM return on invested capital (conceptually NOPAT / invested capital)" },
-              { label: "ROA", expression: "provider TTM return on assets (conceptually net income / average assets)" },
+              { label: "ROE", expression: "reported TTM return on equity (conceptually net income / equity)" },
+              { label: "ROIC", expression: "reported TTM return on invested capital (conceptually NOPAT / invested capital)" },
+              { label: "ROA", expression: "reported TTM return on assets (conceptually net income / average assets)" },
               { label: "Enterprise value", expression: "market capitalization + debt - cash" },
               { label: "Cash return", expression: "free cash flow / positive enterprise value" },
             ]}
@@ -739,7 +749,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               {
                 label: "No reconstruction",
                 value:
-                  "The provider's accounting-return ratios are displayed directly because its exact balance-sheet averaging and NOPAT conventions are not included. Missing ratios stay blank.",
+                  "The accounting-return ratios are displayed directly because their exact balance-sheet averaging and NOPAT conventions are not included. Missing ratios stay blank.",
               },
               {
                 label: "Cash-return scope",
@@ -784,10 +794,13 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
               >
                 <i
                   style={{
-                    width: `${Math.min(
-                      100,
-                      Math.max(0, (analysis.cashConversion ?? 0) / 1.5) * 100,
-                    )}%`,
+                    width:
+                      analysis.cashConversion === null
+                        ? "0%"
+                        : `${Math.min(
+                            100,
+                            Math.max(0, analysis.cashConversion / 1.5) * 100,
+                          )}%`,
                   }}
                 />
                 <b style={{ left: `${(1 / 1.5) * 100}%` }} />
@@ -925,7 +938,7 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
           <div className="profitability-faq-list">
             <Faq
               question="Why does business quality matter to a value investor?"
-              answer="Intrinsic value depends on the cash a business can distribute or reinvest over time. Durable margins, sensible leverage, strong cash conversion and disciplined capital allocation make those owner earnings more resilient and reduce the chance that an apparently cheap stock is deteriorating underneath the multiple."
+              answer="A valuation reference depends on the cash a business can distribute or reinvest over time. Durable margins, sensible leverage, strong cash conversion and disciplined capital allocation make distributable cash more resilient and reduce the chance that an apparently cheap stock is deteriorating underneath the multiple."
             />
             <Faq
               question="When is high return on invested capital durable?"
@@ -933,11 +946,11 @@ export default function BusinessQualityClient({ exchange, symbol }: Props) {
             />
             <Faq
               question="Can strong margins hide a value trap?"
-              answer="Yes. Peak-cycle pricing, underinvestment, working-capital releases, customer concentration or accounting choices can make current margins look stronger than normalized owner earnings. Compare several periods, reconcile net income to free cash flow, and identify what must be spent merely to maintain the franchise."
+              answer="Yes. Peak-cycle pricing, underinvestment, working-capital releases, customer concentration or accounting choices can make current margins look stronger than sustainable cash generation. Compare several periods, reconcile net income to free cash flow, and identify what must be spent merely to maintain the franchise."
             />
             <Faq
               question="How should I connect business quality to price?"
-              answer="Use quality to judge the reliability and duration of normalized owner earnings, not to excuse any valuation. Apply conservative cash-flow and market-comparison ranges, then require a margin of safety proportionate to business risk, balance-sheet risk and forecasting uncertainty."
+              answer="Use quality to judge the reliability and duration of sustainable cash generation, not to excuse any valuation. Apply conservative cash-flow and market-comparison evidence, then require a margin of safety proportionate to business risk, balance-sheet risk and forecasting uncertainty."
             />
             <Faq
               question="What can disqualify the opportunity?"

@@ -79,17 +79,22 @@ function datedNumberPoints(value: unknown): Array<[string, number]> {
 
 export function parseDcfModule(value: unknown): {
   fairValue: number | null;
+  fairValuePeriod: string | null;
   predicted: Array<[string, number]>;
   history: Array<[string, number]>;
   latestAdjustedPrice: number | null;
 } {
   const dcfPayload = value && typeof value === "object" ? (value as DcfModule) : {};
-  const predicted = datedNumberPoints(dcfPayload.predicted_prices).sort(
-    (left, right) =>
-      yyyymmddToIso(right[0]).localeCompare(yyyymmddToIso(left[0])),
-  );
+  const predicted = datedNumberPoints(dcfPayload.predicted_prices)
+    .filter(([, amount]) => amount > 0)
+    .sort(
+      (left, right) =>
+        yyyymmddToIso(right[0]).localeCompare(yyyymmddToIso(left[0])),
+    );
+  const latestPositive = predicted[0] ?? null;
   return {
-    fairValue: predicted[0]?.[1] ?? null,
+    fairValue: latestPositive?.[1] ?? null,
+    fairValuePeriod: latestPositive ? yyyymmddToIso(latestPositive[0]) : null,
     predicted,
     history: datedNumberPoints(dcfPayload.history_prices).sort((left, right) =>
       yyyymmddToIso(left[0]).localeCompare(yyyymmddToIso(right[0])),

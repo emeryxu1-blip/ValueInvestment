@@ -549,10 +549,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-.security-valuation-methods,
 .security-capital-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.security-valuation-methods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -619,7 +624,21 @@
 
 .security-lightweight-chart {
   width: 100%;
+  height: 340px;
   min-height: 340px;
+  overflow: hidden;
+  contain: layout paint;
+}
+
+.security-chart-loading,
+.security-chart-coverage {
+  margin: 8px 6px 0;
+  color: var(--security-muted);
+  font-size: 11px;
+}
+
+.security-chart-coverage {
+  line-height: 1.45;
 }
 
 .security-chart-empty,
@@ -1430,6 +1449,7 @@
   }
 
   .security-lightweight-chart {
+    height: 310px;
     min-height: 310px;
   }
 

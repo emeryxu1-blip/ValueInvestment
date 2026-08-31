@@ -67,7 +67,7 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   price: "Last price",
   changePercent: "Price change",
   marketCap: "Market cap",
-  fairValue: "Provider DCF",
+  fairValue: "DCF value",
   mispricing: "Value gap",
   pe: "P/E",
   revenueGrowth: "Revenue growth",
@@ -83,8 +83,8 @@ const SORTABLE_COLUMNS = new Set<ColumnKey>([
   "revenueGrowth",
 ]);
 
-function formatCurrency(metric: Metric<number>, currency = "USD") {
-  if (metric.value === null) return "—";
+function formatCurrency(metric: Metric<number>, currency: string | null) {
+  if (metric.value === null || !currency) return "—";
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -93,15 +93,15 @@ function formatCurrency(metric: Metric<number>, currency = "USD") {
       maximumFractionDigits: metric.value >= 1000 ? 0 : 2,
     }).format(metric.value);
   } catch {
-    return `$${metric.value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    return "—";
   }
 }
 
-function formatCompactCurrency(metric: Metric<number>) {
-  if (metric.value === null) return "—";
+function formatCompactCurrency(metric: Metric<number>, currency: string | null) {
+  if (metric.value === null || !currency) return "—";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
+    currency,
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(metric.value);
@@ -110,9 +110,9 @@ function formatCompactCurrency(metric: Metric<number>) {
 function percentValue(metric: Metric<number>) {
   if (metric.value === null) return null;
   const unit = metric.unit?.toLowerCase() ?? "";
-  return unit.includes("ratio") || (!unit.includes("%") && Math.abs(metric.value) <= 1)
-    ? metric.value * 100
-    : metric.value;
+  if (unit.includes("ratio")) return metric.value * 100;
+  if (unit.includes("%")) return metric.value;
+  return null;
 }
 
 function formatPercent(metric: Metric<number>, signed = false) {
@@ -123,23 +123,13 @@ function formatPercent(metric: Metric<number>, signed = false) {
 }
 
 function formatMultiple(metric: Metric<number>) {
-  if (metric.value === null) return "—";
+  if (metric.value === null || !metric.unit?.toLowerCase().includes("x")) return "—";
   return `${metric.value.toLocaleString("en-US", { maximumFractionDigits: 1 })}×`;
 }
 
 function safeExchange(stock: ScreenerStock) {
   const raw = stock.exchange.trim().toLowerCase();
-  const mapped: Record<string, string> = {
-    nas: "nasdaq",
-    xnas: "nasdaq",
-    nms: "nasdaq",
-    nys: "nyse",
-    xnys: "nyse",
-    new_york: "nyse",
-  };
-  if (mapped[raw]) return mapped[raw];
-  if (/^[a-z0-9_-]+$/.test(raw) && raw) return raw;
-  return "nasdaq";
+  return raw === "nasdaq" || raw === "nyse" ? raw : null;
 }
 
 function savedScreenFromApi(screen: SavedScreenerApi): SavedScreen {
@@ -183,7 +173,7 @@ function columnMetric(stock: ScreenerStock, column: ColumnKey) {
 function cellValue(stock: ScreenerStock, column: ColumnKey) {
   const metric = columnMetric(stock, column);
   if (column === "price" || column === "fairValue") return formatCurrency(metric, stock.currency);
-  if (column === "marketCap") return formatCompactCurrency(metric);
+  if (column === "marketCap") return formatCompactCurrency(metric, stock.currency);
   if (column === "pe") return formatMultiple(metric);
   return formatPercent(metric, column === "changePercent" || column === "mispricing");
 }
@@ -378,7 +368,9 @@ function ColumnsModal({
 }
 
 function ScanBanner({ scan }: { scan: ScanState }) {
-  const percent = scan.total > 0 ? Math.min(100, Math.round((scan.scanned / scan.total) * 100)) : 0;
+  const percent = scan.total != null && scan.total > 0 && scan.scanned != null
+    ? Math.min(100, Math.round((scan.scanned / scan.total) * 100))
+    : null;
   return (
     <div className={`scan-banner scan-banner--${scan.state}`} role="status" aria-live="polite">
       <div className="scan-banner__icon" aria-hidden="true">
@@ -387,16 +379,19 @@ function ScanBanner({ scan }: { scan: ScanState }) {
       <div className="scan-banner__body">
         <div className="scan-banner__line">
           <strong>{scan.state === "error" ? "Valuation scan paused" : "Evaluating the market"}</strong>
-          {scan.total > 0 ? <span>{percent}%</span> : null}
+          {percent !== null ? <span>{percent}%</span> : <span>Progress unavailable</span>}
         </div>
         <p>
           {scan.state === "error"
             ? "Some companies may be missing. Try again to resume the scan."
-            : "We’re comparing stored prices with provider DCF values. Matches appear as each company is evaluated."}
+            : "We’re comparing stored market prices with current DCF references. Matches appear as each company is evaluated."}
         </p>
         {scan.state !== "error" ? (
-          <div className="scan-progress" aria-label={`${percent}% of securities scanned`}>
-            <span style={{ width: `${percent || 6}%` }} />
+          <div
+            className={`scan-progress${percent === null ? " scan-progress--indeterminate" : ""}`}
+            aria-label={percent === null ? "Scan progress unavailable" : `${percent}% of securities scanned`}
+          >
+            <span style={percent === null ? undefined : { width: `${percent}%` }} />
           </div>
         ) : null}
       </div>
@@ -431,7 +426,7 @@ function CompanyIdentity({ stock }: { stock: ScreenerStock }) {
     <div className="company-identity">
       <CompanyLogo className="company-mark" symbol={stock.symbol} />
       <span className="company-copy">
-        <strong>{stock.company}</strong>
+        <strong>{stock.company ?? "Company name unavailable"}</strong>
         <small>
           {stock.symbol} · {stock.exchange.toUpperCase()}
         </small>
@@ -485,9 +480,13 @@ function ResultsTable({
           {rows.map((stock) => (
             <tr key={`${stock.marketCode}-${stock.symbol}`}>
               <td>
-                <Link href={`/value-opportunities/${safeExchange(stock)}/${stock.symbol.toLowerCase()}/overview`}>
+                {safeExchange(stock) ? (
+                  <Link href={`/value-opportunities/${safeExchange(stock)}/${stock.symbol.toLowerCase()}/overview`}>
+                    <CompanyIdentity stock={stock} />
+                  </Link>
+                ) : (
                   <CompanyIdentity stock={stock} />
-                </Link>
+                )}
               </td>
               {columns.map((column) => (
                 <td key={column}>
@@ -507,14 +506,19 @@ function MobileResults({ rows, columns }: { rows: ScreenerStock[]; columns: Colu
   return (
     <div className="mobile-results">
       {rows.map((stock) => (
-        <Link
+        <div
           className="stock-card"
-          href={`/value-opportunities/${safeExchange(stock)}/${stock.symbol.toLowerCase()}/overview`}
           key={`${stock.marketCode}-${stock.symbol}`}
         >
           <div className="stock-card__top">
-            <CompanyIdentity stock={stock} />
-            <ArrowRight size={17} aria-hidden="true" />
+            {safeExchange(stock) ? (
+              <Link href={`/value-opportunities/${safeExchange(stock)}/${stock.symbol.toLowerCase()}/overview`}>
+                <CompanyIdentity stock={stock} />
+              </Link>
+            ) : (
+              <CompanyIdentity stock={stock} />
+            )}
+            {safeExchange(stock) ? <ArrowRight size={17} aria-hidden="true" /> : null}
           </div>
           <dl className="stock-card__metrics">
             {cardColumns.map((column) => (
@@ -526,7 +530,7 @@ function MobileResults({ rows, columns }: { rows: ScreenerStock[]; columns: Colu
               </div>
             ))}
           </dl>
-        </Link>
+        </div>
       ))}
     </div>
   );
@@ -730,7 +734,15 @@ export function ScreenerClient() {
       } catch {
         if (controller.signal.aborted || requestId !== requestIdRef.current) return;
         if (hasSnapshotRef.current) {
-          setRefreshError("We couldn’t refresh the results. The previous data is still shown.");
+          // Never keep displaying financial numbers after their refresh failed:
+          // the next render must make the unavailable state explicit.
+          allRowsRef.current = [];
+          hasSnapshotRef.current = false;
+          setAllRows([]);
+          setTotalKnown(false);
+          setResponseStatus("error");
+          setScan(null);
+          setRefreshError("We couldn’t refresh the results. Current figures are unavailable.");
         } else {
           setTotalKnown(false);
           setResponseStatus("error");
@@ -856,8 +868,8 @@ export function ScreenerClient() {
     }
   };
 
-  const firstResult = total === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const lastResult = Math.min(total, currentPage * pageSize);
+  const firstResult = totalKnown && total > 0 ? (currentPage - 1) * pageSize + 1 : null;
+  const lastResult = totalKnown && total > 0 ? Math.min(total, currentPage * pageSize) : null;
   return (
     <main className="screener-page">
       <div className="screener-shell">
@@ -880,7 +892,7 @@ export function ScreenerClient() {
             <div>
               <h1>Find value opportunities worth investigating.</h1>
               <p>
-                Start with a margin of safety, then narrow by durable owner earnings, financial resilience, and sensible market expectations.
+                Start with a margin of safety, then narrow by DCF evidence, financial resilience, and sensible market expectations.
               </p>
             </div>
           </div>
@@ -1069,15 +1081,15 @@ export function ScreenerClient() {
 
           {scan && (scan.state === "warming" || scan.state === "error") ? <ScanBanner scan={scan} /> : null}
 
-          {!error ? (
+          {!error && !refreshError ? (
             <>
               <div className="result-context">
                 <div>
                   <strong>
-                    {total.toLocaleString("en-US")} {totalKnown ? "companies" : "discovered so far"}
+                    {totalKnown ? total.toLocaleString("en-US") : "—"} {totalKnown ? "companies" : "total unavailable"}
                   </strong>
                   <span>
-                    {total > 0
+                    {firstResult !== null && lastResult !== null
                       ? `Showing ${firstResult.toLocaleString("en-US")}–${lastResult.toLocaleString("en-US")}`
                       : scan?.state === "warming"
                         ? "Scanning the universe"
@@ -1092,7 +1104,7 @@ export function ScreenerClient() {
             </>
           ) : null}
 
-          {error ? null : (isLoading || scan?.state === "warming") && allRows.length === 0 ? (
+          {error || refreshError ? null : (isLoading || scan?.state === "warming") && allRows.length === 0 ? (
             <LoadingRows columns={columns} />
           ) : rows.length ? (
             <>
@@ -1113,7 +1125,7 @@ export function ScreenerClient() {
               <h3>No companies match this screen</h3>
               <p>Remove one or two filters to widen the opportunity set.</p>
               <button className="secondary-button" type="button" onClick={() => setFilters(DEFAULT_FILTERS)}>
-                Reset to provider value
+                Reset to DCF value
               </button>
             </div>
           )}
@@ -1178,7 +1190,7 @@ export function ScreenerClient() {
                 <ChevronDown size={18} aria-hidden="true" />
               </summary>
               <p>
-                Intrinsic value is a range, not a precise number. Forecasts can be wrong, cycles can turn, and capital
+                DCF value is a reference, not a precise prediction. Forecasts can be wrong, cycles can turn, and capital
                 allocation can disappoint. Requiring price to sit below a conservative value estimate creates room for
                 those errors and helps separate an interesting business from an investable price.
               </p>
@@ -1209,7 +1221,7 @@ export function ScreenerClient() {
 
         <p className="screener-disclaimer">
           Prices and estimates can be delayed or incomplete. A screen identifies research candidates, not buy
-          recommendations. Intrinsic value is an uncertain range and should be tested against company filings.
+          recommendations. DCF value is an uncertain reference and should be tested against company filings.
         </p>
       </div>
 

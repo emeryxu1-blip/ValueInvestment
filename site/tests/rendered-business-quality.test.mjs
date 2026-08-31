@@ -82,7 +82,7 @@ test("renders the business-quality shell without copied site chrome", async () =
   assertResearchPanelHeader(html, {
     view: "quality",
     eyebrow: "Quality check",
-    title: "Can this business protect and grow owner earnings?",
+    title: "Can this business protect and grow distributable cash?",
     action: "Refresh quality",
   });
   assert.match(html, /Loading[\s\S]*MSFT[\s\S]*business quality/);

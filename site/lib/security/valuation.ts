@@ -236,10 +236,7 @@ export function calculateDcfValuation(
       : null;
   const providerValue = positiveNumber(dcf.fairValue);
   const price = positiveNumber(analysisMetricNumber(metrics, "price"));
-  const providerValuePeriod =
-    providerValue !== null && dcf.predicted[0]
-      ? yyyymmddToIso(dcf.predicted[0][0])
-      : null;
+  const providerValuePeriod = providerValue !== null ? dcf.fairValuePeriod : null;
 
   return {
     kind: "dcf",

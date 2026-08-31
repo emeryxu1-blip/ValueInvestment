@@ -28,7 +28,7 @@ function stock(symbol, options = {}) {
     symbol,
     company: options.company ?? symbol,
     filterMask: options.filterMask ?? 0,
-    currency: "USD",
+    currency: options.currency ?? "USD",
     price: metric(options.price ?? 10),
     changePercent: metric(options.changePercent ?? 1),
     marketCap: metric(
@@ -58,8 +58,8 @@ test("publishes the exact v3 plain-title and investing-formula catalog", () => {
       ["top-market-cap-1000", "Largest companies", "Market-cap rank ≤ 1,000"],
       ["us-major", "Major U.S. exchanges", "Exchange ∈ {NYSE, NASDAQ}"],
       ["technology", "Technology companies", "Sector contains Technology"],
-      ["intrinsic-fair", "Provider DCF at least matches price", "Positive provider DCF ÷ positive price ≥ 1.0×"],
-      ["margin-20", "Meaningful provider value gap", "Provider DCF ÷ positive price − 1 ≥ 20%"],
+      ["intrinsic-fair", "DCF value at least matches price", "Positive DCF value ÷ positive price ≥ 1.0×"],
+      ["margin-20", "Meaningful DCF value gap", "DCF value ÷ positive price − 1 ≥ 20%"],
       ["pe-positive-15", "Profitable at a low multiple", "0 < P/E ≤ 15×"],
       ["fcf-yield-5", "Strong cash-flow yield", "TTM FCF ÷ market cap ≥ 5%"],
       ["ev-ebitda-below-10", "Low enterprise-value multiple", "0 < EV ÷ TTM EBITDA ≤ 10×"],
@@ -261,6 +261,34 @@ test("preserves the server filter mask while normalizing a snapshot", () => {
     SCREENER_FILTER_BITS["intrinsic-fair"] |
       SCREENER_FILTER_BITS.technology,
   );
+});
+
+test("preserves the provider-confirmed USD currency in compact snapshots", () => {
+  const normalized = normalizeScreenerPayload(
+    {
+      schemaVersion: SCREENER_CLIENT_SNAPSHOT_SCHEMA_VERSION,
+      generationId: "daily-unknown-currency",
+      asOf: "2026-08-10T03:17:00.000Z",
+      total: 1,
+      rows: [{
+        marketCode: "185:MSFT",
+        exchange: "nasdaq",
+        symbol: "MSFT",
+        company: "Microsoft",
+        filterMask: SCREENER_FILTER_BITS.technology,
+        currency: "USD",
+        price: 525.4,
+        changePercent: -0.4,
+        marketCap: 3_900_000_000_000,
+        fairValue: null,
+        mispricing: null,
+        pe: 37.2,
+        revenueGrowth: 12,
+      }],
+    },
+    200,
+  );
+  assert.equal(normalized.rows[0].currency, "USD");
 });
 
 test("normalizes the compact primitive snapshot contract", () => {

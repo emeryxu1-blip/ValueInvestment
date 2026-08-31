@@ -99,20 +99,40 @@ test("uses exact unrounded value-gap boundaries and rejects nonpositive selected
   assert.equal(positiveNumber(10), 10);
 });
 
-test("selects the latest DCF date consistently across compact and ISO date formats", () => {
+test("selects the latest positive DCF date consistently across compact and ISO date formats", () => {
   const valuation = calculateDcfValuation({
     price: metric(100),
     fairValueModule: metric({
       predicted_prices: [
         ["2026-03-31", 130],
         ["20251231", 120],
-        ["2026-12-31", 140],
+        ["2026-12-31", 0],
+        ["2027-12-31", -5],
+        ["2027-06-30", 140],
       ],
     }),
   });
 
   assert.equal(valuation.providerValue, 140);
-  assert.equal(valuation.providerValuePeriod, "2026-12-31");
+  assert.equal(valuation.providerValuePeriod, "2027-06-30");
+  assert.deepEqual(valuation.providerValuePeriods, [
+    { period: "2025-12-31", value: 120 },
+    { period: "2026-03-31", value: 130 },
+    { period: "2027-06-30", value: 140 },
+  ]);
+});
+
+test("does not publish a nonpositive latest provider DCF value", () => {
+  const valuation = calculateDcfValuation({
+    price: metric(100),
+    fairValueModule: metric({
+      predicted_prices: [["20261231", 0], ["20251231", -10]],
+    }),
+  });
+
+  assert.equal(valuation.providerValue, null);
+  assert.equal(valuation.providerValuePeriod, null);
+  assert.deepEqual(valuation.providerValuePeriods, []);
 });
 
 test("does not synthesize a DCF when provider modules are unavailable", () => {

@@ -3,8 +3,11 @@ import {
   type ScreenerClientSnapshotSchemaVersion,
 } from "./client-snapshot-contract.ts";
 
-const CLIENT_SNAPSHOT_CACHE_CONTROL =
-  "public, max-age=300, s-maxage=300";
+// The snapshot is immutable after publication, but the URL is not generation-keyed.
+// Keep browser/proxy caching disabled so a newly published D1 generation is always
+// observed on the next request. The ETag remains useful for explicit conditional
+// requests made against the current origin response.
+const CLIENT_SNAPSHOT_CACHE_CONTROL = "no-store";
 
 export type StoredScreenerClientSnapshotResponse = {
   payloadJson: string;

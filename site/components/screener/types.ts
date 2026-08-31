@@ -1,4 +1,4 @@
-export type DataSource = "live" | "derived";
+export type DataSource = "live" | "derived" | "unknown";
 
 export type Metric<T> = {
   value: T | null;
@@ -12,9 +12,9 @@ export type ScreenerStock = {
   marketCode: string;
   exchange: string;
   symbol: string;
-  company: string;
+  company: string | null;
   filterMask: number;
-  currency: string;
+  currency: "USD";
   price: Metric<number>;
   changePercent: Metric<number>;
   marketCap: Metric<number>;
@@ -53,8 +53,8 @@ export type SortOrder = "asc" | "desc";
 
 export type ScanState = {
   state: "idle" | "warming" | "ready" | "error";
-  scanned: number;
-  total: number;
+  scanned: number | null;
+  total: number | null;
   message?: string;
 };
 

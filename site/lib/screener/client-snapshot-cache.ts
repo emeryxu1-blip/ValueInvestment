@@ -42,17 +42,10 @@ export async function cachedScreenerSnapshotResponse(
     waitUntil: (promise: Promise<unknown>) => void;
   },
 ): Promise<Response> {
-  const cacheKey = screenerSnapshotCacheKey(request);
-  const cached = await options.cache.match(cacheKey);
-  if (cached) return conditionalSnapshotResponse(request, cached);
-
+  // D1 can publish a newer generation without changing this route's URL. A
+  // schema-only edge key could therefore replay old financial numbers after a
+  // successful refresh. Always revalidate at the origin; retain this wrapper's
+  // conditional-GET behavior, but never read or write an edge body cache.
   const response = await options.fetchOrigin();
-  if (
-    response.status === 200 &&
-    response.headers.get("X-Screener-Schema-Version") ===
-      String(SCREENER_CLIENT_SNAPSHOT_SCHEMA_VERSION)
-  ) {
-    options.waitUntil(options.cache.put(cacheKey, response.clone()));
-  }
-  return response;
+  return conditionalSnapshotResponse(request, response);
 }

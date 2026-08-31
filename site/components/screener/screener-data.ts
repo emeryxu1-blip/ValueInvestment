@@ -65,8 +65,8 @@ export const FILTER_LIBRARY: ScreenerFilter[] = [
   {
     id: "intrinsic-fair",
     category: "Valuation",
-    label: "Provider DCF at least matches price",
-    shortLabel: "Positive provider DCF ÷ positive price ≥ 1.0×",
+    label: "DCF value at least matches price",
+    shortLabel: "Positive DCF value ÷ positive price ≥ 1.0×",
     field: "fairValueToPrice",
     operator: "gte",
     value: 1,
@@ -74,8 +74,8 @@ export const FILTER_LIBRARY: ScreenerFilter[] = [
   {
     id: "margin-20",
     category: "Valuation",
-    label: "Meaningful provider value gap",
-    shortLabel: "Provider DCF ÷ positive price − 1 ≥ 20%",
+    label: "Meaningful DCF value gap",
+    shortLabel: "DCF value ÷ positive price − 1 ≥ 20%",
     minimumSnapshotSchemaVersion: 3,
     field: "mispricing",
     operator: "gte",
@@ -319,11 +319,11 @@ export const COLUMN_OPTIONS: Array<{
 }> = [
   { key: "price", label: "Last price", description: "Latest available market price" },
   { key: "changePercent", label: "Price change", description: "Change in the latest stored session" },
-  { key: "marketCap", label: "Market cap", description: "Equity value in USD" },
-  { key: "fairValue", label: "Provider DCF", description: "Positive value at the latest date in the provider DCF series; no peer estimate" },
-  { key: "mispricing", label: "Value gap", description: "Provider DCF divided by stored price, minus one" },
-  { key: "pe", label: "P/E", description: "Provider trailing-twelve-month price-to-earnings multiple" },
-  { key: "revenueGrowth", label: "Revenue growth", description: "Provider trailing-twelve-month year-over-year growth" },
+  { key: "marketCap", label: "Market cap", description: "Reported equity value in USD" },
+  { key: "fairValue", label: "DCF value", description: "Current DCF reference; no peer estimate" },
+  { key: "mispricing", label: "Value gap", description: "DCF value divided by stored price, minus one" },
+  { key: "pe", label: "P/E", description: "Trailing-twelve-month price-to-earnings multiple" },
+  { key: "revenueGrowth", label: "Revenue growth", description: "Trailing-twelve-month year-over-year growth" },
 ];
 
 export const DEFAULT_COLUMNS: ColumnKey[] = [
@@ -447,7 +447,7 @@ function metric(
     const source = raw.source;
     return {
       value: toNumber(raw.value),
-      source: source === "live" || source === "derived" ? source : missingSource,
+      source: source === "live" || source === "derived" || source === "unknown" ? source : missingSource,
       asOf: typeof raw.asOf === "string" ? raw.asOf : missingAsOf,
       unit: typeof raw.unit === "string" ? raw.unit : missingUnit,
       reason: typeof raw.reason === "string" ? raw.reason : undefined,
@@ -462,14 +462,15 @@ function normalizeRow(raw: unknown, missingSource: DataSource, asOf: string | nu
   const symbol = toStringValue(firstDefined(raw.symbol, raw.ticker, raw.stockCode, raw.securityCode));
   if (!symbol && !marketCode) return null;
   const resolvedSymbol = symbol || marketCode.split(/[.:]/).at(-1) || marketCode;
-  const exchange = toStringValue(firstDefined(raw.exchange, raw.market, raw.exchangeCode), "NASDAQ");
-  const rowAsOf = toStringValue(raw.asOf, asOf || "") || asOf;
+  const exchange = toStringValue(firstDefined(raw.exchange, raw.market, raw.exchangeCode)).trim().toLowerCase();
+  if (exchange !== "nasdaq" && exchange !== "nyse") return null;
+  const rowAsOf = toStringValue(raw.asOf, "") || asOf;
   const parsedFilterMask = toNumber(
     firstDefined(raw.filterMask, raw.filter_mask),
   );
   const price = metric(firstDefined(raw.price, raw.lastPrice, raw.last_price, raw["10"]), missingSource, rowAsOf, "USD");
   const fairValue = metric(
-    firstDefined(raw.fairValue, raw.intrinsicValue, raw.dcfValue, raw.stockdiag_fundamental_value_dcf),
+    firstDefined(raw.fairValue, raw.dcfValue, raw.stockdiag_fundamental_value_dcf),
     missingSource,
     rowAsOf,
     "USD",
@@ -478,14 +479,14 @@ function normalizeRow(raw: unknown, missingSource: DataSource, asOf: string | nu
     marketCode,
     exchange,
     symbol: resolvedSymbol.toUpperCase(),
-    company: toStringValue(firstDefined(raw.company, raw.name, raw.companyName, raw["55"]), resolvedSymbol.toUpperCase()),
+    company: toStringValue(firstDefined(raw.company, raw.name, raw.companyName, raw["55"])).trim() || null,
     filterMask:
       parsedFilterMask !== null &&
       Number.isSafeInteger(parsedFilterMask) &&
       parsedFilterMask >= 0
         ? parsedFilterMask
         : 0,
-    currency: toStringValue(firstDefined(raw.currency, raw.currencyCode), "USD"),
+    currency: "USD",
     price,
     changePercent: metric(
       firstDefined(raw.changePercent, raw.priceChange, raw.change, raw.price_change_ratio_pct),
@@ -493,7 +494,7 @@ function normalizeRow(raw: unknown, missingSource: DataSource, asOf: string | nu
       rowAsOf,
       "%",
     ),
-    marketCap: metric(firstDefined(raw.marketCap, raw.market_cap, raw.total_market_value), missingSource, rowAsOf, "USD"),
+    marketCap: metric(firstDefined(raw.marketCap, raw.market_cap, raw.total_market_value), missingSource, rowAsOf),
     fairValue,
     mispricing: metric(
       firstDefined(raw.mispricing, raw.upside, raw.discount),
@@ -570,8 +571,7 @@ function assertSupportedCompactSnapshot(payload: UnknownRecord): void {
       row.symbol.length === 0 ||
       (row.company !== null &&
         (typeof row.company !== "string" || row.company.length === 0)) ||
-      typeof row.currency !== "string" ||
-      row.currency.length === 0 ||
+      row.currency !== "USD" ||
       typeof row.filterMask !== "number" ||
       !Number.isSafeInteger(row.filterMask) ||
       row.filterMask < 0 ||
@@ -597,8 +597,8 @@ function scanFromPayload(payload: UnknownRecord, httpStatus: number): ScanState 
   const scan = getNestedRecord(payload, "scan") ?? getNestedRecord(payload, "valuationScan");
   if (!scan && httpStatus !== 202) return null;
   const progress = scan && isRecord(scan.progress) ? scan.progress : undefined;
-  const scanned = toNumber(firstDefined(scan?.scanned, scan?.completed, progress?.scanned, progress?.completed)) ?? 0;
-  const total = toNumber(firstDefined(scan?.total, progress?.total)) ?? 0;
+  const scanned = toNumber(firstDefined(scan?.scanned, scan?.completed, progress?.scanned, progress?.completed));
+  const total = toNumber(firstDefined(scan?.total, progress?.total));
   const rawState = toStringValue(scan?.state, httpStatus === 202 ? "warming" : "idle");
   const state: ScanState["state"] =
     rawState === "ready" || rawState === "error" || rawState === "idle" ? rawState : "warming";
@@ -614,7 +614,10 @@ export function normalizeScreenerPayload(payload: unknown, httpStatus: number) {
   const body: UnknownRecord = isRecord(payload) ? payload : {};
   assertSupportedCompactSnapshot(body);
   const sourceValue = toStringValue(firstDefined(body.source, body.mode, body.dataMode));
-  const missingSource: DataSource = sourceValue === "derived" ? "derived" : "live";
+  const missingSource: DataSource =
+    sourceValue === "live" || sourceValue === "derived" || sourceValue === "unknown"
+      ? sourceValue
+      : "unknown";
   const asOf = toStringValue(body.asOf) || null;
   const rows = findRows(body)
     .map((row) => normalizeRow(row, missingSource, asOf))
@@ -622,12 +625,12 @@ export function normalizeScreenerPayload(payload: unknown, httpStatus: number) {
   const pageRecord = getNestedRecord(body, "page") ?? getNestedRecord(body, "pagination") ?? {};
   const parsedTotal = toNumber(firstDefined(pageRecord.total, body.total, body.totalCount, body.count));
   const totalKnown = parsedTotal !== null;
-  const total = parsedTotal ?? rows.length;
+  const total = parsedTotal;
   const page = toNumber(firstDefined(pageRecord.page, pageRecord.current, body.currentPage)) ?? 1;
   const pageSize = toNumber(firstDefined(pageRecord.pageSize, pageRecord.limit, body.pageSize)) ?? Math.max(rows.length, 20);
   const totalPages =
     toNumber(firstDefined(pageRecord.totalPages, pageRecord.pages, body.totalPages)) ??
-    Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
+    (total === null ? null : Math.max(1, Math.ceil(total / Math.max(1, pageSize))));
 
   return {
     rows,

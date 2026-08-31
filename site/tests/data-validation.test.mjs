@@ -54,6 +54,12 @@ test("rejects inverted ranges and unsafe route parameters", () => {
     securityParamsSchema.parse({ exchange: "nasdaq", symbol: "../../MSFT" }),
   );
   assert.deepEqual(seriesQuerySchema.parse({}), { group: "valuation", range: "1y" });
+  assert.deepEqual(
+    seriesQuerySchema.parse({ before: "1720000000000", limit: "180" }),
+    { group: "valuation", range: "1y", before: 1720000000000, limit: 180 },
+  );
+  assert.throws(() => seriesQuerySchema.parse({ before: "0" }));
+  assert.throws(() => seriesQuerySchema.parse({ limit: "19" }));
 });
 
 test("maps UI filter descriptors and reports unsupported filters", () => {

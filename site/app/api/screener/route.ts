@@ -9,7 +9,7 @@ export async function GET(request: Request): Promise<Response> {
     const result = await getScreenerResponse(query, await getD1());
     return jsonResponse(result.response, {
       status: result.status,
-      cacheControl: "public, max-age=300, s-maxage=300, stale-while-revalidate=86400",
+      cacheControl: "no-store",
     });
   } catch (error) {
     return routeError(error);

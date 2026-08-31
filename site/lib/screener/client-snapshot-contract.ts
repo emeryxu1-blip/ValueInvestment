@@ -32,7 +32,7 @@ export type ScreenerClientSnapshotRow = {
   symbol: string;
   company: string | null;
   filterMask: number;
-  currency: string;
+  currency: "USD";
   price: number | null;
   changePercent: number | null;
   marketCap: number | null;

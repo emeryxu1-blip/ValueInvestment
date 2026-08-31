@@ -389,6 +389,8 @@ export const securityParamsSchema = z.object({
 export const seriesQuerySchema = z.object({
   group: z.enum(["valuation", "price", "eps", "financials"]).default("valuation"),
   range: z.enum(["1m", "3m", "6m", "1y", "3y", "5y", "max"]).default("1y"),
+  before: z.coerce.number().int().positive().max(8_640_000_000_000).optional(),
+  limit: z.coerce.number().int().min(20).max(2000).optional(),
 });
 
 export const analysisQuerySchema = z.object({

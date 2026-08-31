@@ -73,7 +73,7 @@ function snapshotRow(symbol, options = {}) {
     ),
     sector: metric(options.sector ?? "Technology"),
     filterMask: options.filterMask ?? 0,
-    currency: "USD",
+    currency: options.currency ?? "USD",
   };
 }
 

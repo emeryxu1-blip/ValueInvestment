@@ -51,7 +51,7 @@ export function companyAnalysisApplicability(
       companyAnalysis: false,
       securityType: security.securityType,
       reason:
-        "AInvest did not return an operating-industry classification, so company valuation and business-quality models are unavailable for this security.",
+        "An operating-industry classification is unavailable, so company valuation and business-quality models are unavailable for this security.",
     };
   }
 
@@ -64,7 +64,7 @@ export function companyAnalysisApplicability(
       companyAnalysis: false,
       securityType: security.securityType,
       reason:
-        "AInvest classifies this security as a special-purpose acquisition or other non-operating vehicle, so company valuation and business-quality models are unavailable.",
+        "This security is classified as a special-purpose acquisition or other non-operating vehicle, so company valuation and business-quality models are unavailable.",
     };
   }
 
@@ -89,7 +89,7 @@ export function companyAnalysisApplicability(
       companyAnalysis: false,
       securityType: security.securityType,
       reason:
-        "AInvest legal-name, industry, and workforce inputs identify fund-like rather than operating-company economics, so valuation and business-quality results are withheld.",
+        "Available legal-name, industry, and workforce inputs identify fund-like rather than operating-company economics, so valuation and business-quality results are withheld.",
     };
   }
 

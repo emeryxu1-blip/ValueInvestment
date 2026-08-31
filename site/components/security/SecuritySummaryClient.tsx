@@ -23,7 +23,7 @@ import {
   TrendingUp,
   WalletCards,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizePeers, normalizeSeries, providerNeutralText } from "./data";
 import {
   CashFlowWaterfall,
@@ -49,14 +49,18 @@ const overviewPanelHeader = {
     "Connect entry price, estimated value, cash generation, and financial resilience before judging the opportunity.",
 } as const;
 
-const money = (value: number | null, currency = "USD", compact = false) => {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    notation: compact ? "compact" : "standard",
-    maximumFractionDigits: compact ? 2 : 2,
-  }).format(value);
+const money = (value: number | null, currency: string | null, compact = false) => {
+  if (value === null || !Number.isFinite(value) || !currency) return "—";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: compact ? "compact" : "standard",
+      maximumFractionDigits: compact ? 2 : 2,
+    }).format(value);
+  } catch {
+    return "—";
+  }
 };
 
 const percentValue = (value: number | null, isRatio = false) => {
@@ -101,62 +105,169 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
   } = useSecurityResearchShell();
   const [series, setSeries] = useState<SeriesResponse | null>(null);
   const [priceSeries, setPriceSeries] = useState<SeriesResponse | null>(null);
+  const [priceLoadingMore, setPriceLoadingMore] = useState(false);
   const [peers, setPeers] = useState<PeersResponse | null>(null);
+  const priceLoadControllerRef = useRef<AbortController | null>(null);
+  const overviewControllerRef = useRef<AbortController | null>(null);
+  const overviewRequestRef = useRef(0);
+  const requestGenerationRef = useRef(0);
+  const priceRequestIdRef = useRef(0);
+  const priceGenerationRef = useRef(0);
   const [overviewRefreshing, setOverviewRefreshing] = useState(false);
 
   const seriesPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/series?group=valuation&range=max`;
   const priceSeriesPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/series?group=price&range=3m`;
+  const priceHistoryHasMore = priceSeries?.hasMore === true && priceSeries?.nextCursor != null;
   const peersPath = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/peers`;
+
+  const mergePricePage = useCallback(
+    (current: SeriesResponse | null, older: SeriesResponse, requestedCursor: number) => {
+      if (!current) return older;
+      const existing = current.series[0]?.points ?? [];
+      const incoming = older.series[0]?.points ?? [];
+      const mergedByTime = new Map(existing.map((point) => [point.time, point]));
+      incoming.forEach((point) => mergedByTime.set(point.time, point));
+      const merged = [...mergedByTime.values()].sort((left, right) => left.time.localeCompare(right.time));
+      const cursorAdvanced =
+        older.nextCursor != null && older.nextCursor < requestedCursor;
+      return {
+        ...current,
+        ...older,
+        series: current.series.map((line, index) =>
+          index === 0 ? { ...line, points: merged } : line,
+        ),
+        oldestTime: merged[0]?.time ?? current.oldestTime,
+        newestTime: merged.at(-1)?.time ?? current.newestTime,
+        hasMore: older.hasMore === true && cursorAdvanced && older.series[0]?.points.length !== 0,
+        nextCursor: cursorAdvanced ? older.nextCursor : null,
+      };
+    },
+    [],
+  );
 
   const loadOverviewData = useCallback(
     async (signal?: AbortSignal) => {
+      const generation = ++requestGenerationRef.current;
+      priceGenerationRef.current = generation;
+      const overviewSignal = signal ?? (() => {
+        overviewControllerRef.current?.abort();
+        const controller = new AbortController();
+        overviewControllerRef.current = controller;
+        return controller.signal;
+      })();
+      const isCurrent = () =>
+        !overviewSignal.aborted && generation === requestGenerationRef.current;
       const results = await Promise.allSettled([
-        fetch(seriesPath, { signal, cache: "no-store" })
+        fetch(seriesPath, { signal: overviewSignal, cache: "no-store" })
           .then(unwrapResponse)
-          .then((payload) => setSeries(normalizeSeries(payload, symbol))),
-        fetch(priceSeriesPath, { signal, cache: "no-store" })
+          .then((payload) => {
+            if (isCurrent()) setSeries(normalizeSeries(payload, symbol));
+          }),
+        fetch(priceSeriesPath, { signal: overviewSignal, cache: "no-store" })
           .then(unwrapResponse)
-          .then((payload) => setPriceSeries(normalizeSeries(payload, symbol))),
-        fetch(peersPath, { signal, cache: "no-store" })
+          .then((payload) => {
+            if (isCurrent()) setPriceSeries(normalizeSeries(payload, symbol));
+          }),
+        fetch(peersPath, { signal: overviewSignal, cache: "no-store" })
           .then(unwrapResponse)
-          .then((payload) => setPeers(normalizePeers(payload, symbol))),
+          .then((payload) => {
+            if (isCurrent()) setPeers(normalizePeers(payload, symbol));
+          }),
       ]);
-      if (signal?.aborted) return;
+      if (overviewSignal.aborted || generation !== requestGenerationRef.current) {
+        return;
+      }
       if (results[0].status === "rejected") setSeries(null);
       if (results[1].status === "rejected") setPriceSeries(null);
       if (results[2].status === "rejected") setPeers(normalizePeers({}, symbol));
+      if (overviewControllerRef.current?.signal === overviewSignal) {
+        overviewControllerRef.current = null;
+      }
     },
     [peersPath, priceSeriesPath, seriesPath, symbol],
   );
 
   useEffect(() => {
     if (!summary || !summary.applicability.companyAnalysis) return;
+    const requestId = ++overviewRequestRef.current;
+    overviewControllerRef.current?.abort();
     const controller = new AbortController();
-    const initial = window.setTimeout(
-      () => void loadOverviewData(controller.signal),
-      0,
-    );
+    overviewControllerRef.current = controller;
+    const initial = window.setTimeout(() => {
+      if (requestId === overviewRequestRef.current) {
+        void loadOverviewData(controller.signal);
+      }
+    }, 0);
     return () => {
       window.clearTimeout(initial);
       controller.abort();
+      if (overviewControllerRef.current === controller) {
+        overviewControllerRef.current = null;
+      }
     };
   }, [loadOverviewData, summary]);
+
+  const loadMorePriceHistory = useCallback(async () => {
+    const cursor = priceSeries?.nextCursor;
+    if (
+      priceLoadingMore ||
+      priceLoadControllerRef.current ||
+      !priceHistoryHasMore ||
+      cursor == null
+    ) return;
+    const generation = priceGenerationRef.current;
+    const controller = new AbortController();
+    priceLoadControllerRef.current = controller;
+    const requestId = ++priceRequestIdRef.current;
+    setPriceLoadingMore(true);
+    try {
+      const path = `/api/security/${encodeURIComponent(exchange)}/${encodeURIComponent(symbol)}/series?group=price&range=3m&before=${cursor}&limit=180`;
+      const payload = await fetch(path, { signal: controller.signal, cache: "no-store" }).then(unwrapResponse);
+      if (
+        controller.signal.aborted ||
+        requestId !== priceRequestIdRef.current ||
+        generation !== priceGenerationRef.current
+      ) return;
+      const older = normalizeSeries(payload, symbol);
+      setPriceSeries((current) => mergePricePage(current, older, cursor));
+    } catch (reason) {
+      if (!controller.signal.aborted) console.warn("Unable to load older price history", reason);
+    } finally {
+      if (requestId === priceRequestIdRef.current) {
+        setPriceLoadingMore(false);
+        if (priceLoadControllerRef.current === controller) {
+          priceLoadControllerRef.current = null;
+        }
+      }
+    }
+  }, [
+    exchange,
+    mergePricePage,
+    priceHistoryHasMore,
+    priceLoadingMore,
+    priceSeries?.nextCursor,
+    symbol,
+  ]);
 
   const refreshOverview = useCallback(async () => {
     setOverviewRefreshing(true);
     try {
       await refreshSummary(true);
-      if (summary?.applicability.companyAnalysis) {
-        await loadOverviewData();
-      }
     } finally {
       setOverviewRefreshing(false);
     }
-  }, [
-    loadOverviewData,
-    refreshSummary,
-    summary?.applicability.companyAnalysis,
-  ]);
+  }, [refreshSummary]);
+
+  useEffect(() => {
+    return () => {
+      priceLoadControllerRef.current?.abort();
+      overviewControllerRef.current?.abort();
+      priceRequestIdRef.current += 1;
+      priceGenerationRef.current += 1;
+      requestGenerationRef.current += 1;
+      overviewRequestRef.current += 1;
+    };
+  }, []);
 
   const panelRefreshAction = (
     <button
@@ -226,6 +337,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
   }
 
   const data = summary;
+  const currency = data.identity.currency;
   if (!data.applicability.companyAnalysis) {
     return (
       <div className="security-page">
@@ -249,6 +361,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
     );
   }
   const valuationSeries = series?.series.some((line) => line.points.length) ? series : null;
+  const providerDcfPointCount = valuationSeries?.valuationCoverage?.providerDcf?.pointCount ?? 0;
   const netMargin = data.derived.netMargin.value;
   const fcfMargin = data.derived.freeCashFlowMargin.value;
   const companyDescription = data.identity.description.value
@@ -287,7 +400,13 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             description={`Recent ${canonicalSymbol} price history frames the entry point and the risk of paying for expectations already reflected in the shares.`}
             icon={<LineChart aria-hidden="true" />}
           />
-          <ValuationHistoryChart data={priceSeries} kind="price" />
+          <ValuationHistoryChart
+            data={priceSeries}
+            kind="price"
+            hasMoreHistory={priceHistoryHasMore}
+            loadingMore={priceLoadingMore}
+            onRequestMoreHistory={loadMorePriceHistory}
+          />
         </section>
 
         <section className="security-card security-value-card" aria-labelledby="value-heading">
@@ -311,30 +430,45 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           </div>
           <ValuationRange data={data} />
           <div className="security-valuation-methods">
-            <MetricBlock label="Provider DCF" metric={data.valuation.dcfValue} formatter={(value) => money(value, data.identity.currency)} />
+            <MetricBlock label="DCF value" metric={data.valuation.dcfValue} formatter={(value) => money(value, data.identity.currency)} />
+            <MetricBlock label="Earnings-power floor" metric={data.valuation.earningsPowerFloor} formatter={(value) => money(value, data.identity.currency)} />
             <MetricBlock label="Peer-based value" metric={data.valuation.peerValue} formatter={(value) => money(value, data.identity.currency)} />
           </div>
           <CalculationDisclosure
             title="How estimated value is selected"
-            summary="Implied value gap = selected value ÷ current price − 1"
+            summary="The server selects the DCF value when available; the earnings-power floor and peer estimate remain separate cross-checks."
             badges={[
-              data.valuation.dcfValue.value !== null ? "Provider DCF selected" : data.valuation.peerValue.value !== null ? "Peer estimate selected" : "No value selected",
               data.valuation.dcfValue.value !== null
-                ? `DCF ${asOfDate(data.valuation.dcfValue.asOf)}`
+                ? "DCF value selected"
+                : data.valuation.peerValue.value !== null
+                  ? "Peer estimate selected"
+                  : "No value selected",
+              data.valuation.dcfValue.value !== null
+                ? `DCF source ${asOfDate(data.valuation.dcfValue.asOf)}`
                 : data.valuation.peerValue.value !== null
                   ? `Peers ${asOfDate(data.valuation.peerValue.asOf)}`
                   : null,
+              data.valuation.dcfModelPeriod
+                ? `DCF period ${data.valuation.dcfModelPeriod}`
+                : null,
               `Price ${asOfDate(data.quote.price.asOf)}`,
             ]}
             formulas={[
-              { label: "Selected value", expression: "positive provider DCF; otherwise positive peer estimate" },
-              { label: "Value gap", expression: "selected value / positive current price - 1" },
-              { label: "Peer estimate", expression: "median of positive P/E, P/S and P/B implied values" },
-              { label: "Method value", expression: "peer median multiple × (price / company multiple)" },
+              { label: "Estimated value", expression: "fairValue = dcfValue ?? peerValue" },
+              { label: "Implied value gap", expression: "Implied value gap = fairValue / current price - 1" },
+              { label: "Earnings-power floor", expression: "[min(positive TTM free cash flow, positive TTM net income) × 80% ÷ (10% − 0%) + cash and marketable securities − debt] ÷ shares outstanding" },
+              { label: "Peer-based value", expression: "median of positive P/E, P/S and P/B implied values from peer snapshots" },
             ]}
             items={[
-              { label: "Provider DCF", value: `Latest-dated positive value in the provider's DCF series. Its discount rate, terminal growth, forecast horizon, and per-share bridge are not included in the feed.` },
+              { label: "Estimated value", value: "Server / Worker: fairValue = dcfValue ?? peerValue from the summary API." },
+              { label: "Implied value gap", value: "Server / Worker: fairValue / current price - 1." },
+              { label: "DCF value", value: "The latest positive dated DCF value is the selected intrinsic-value estimate. Its model period and source timestamp are shown separately." },
+              { label: "Earnings-power floor", value: "A conservative no-growth screening floor: the lower of positive TTM free cash flow and net income is reduced by 20%, capitalized at 10%, adjusted for cash and marketable securities less debt, and divided by shares. It is not a conventional forward DCF." },
+              { label: "Peer-based value", value: "Server / Worker: the median of positive peer-implied P/E, P/S, and P/B values." },
+              { label: "Current price", value: "Server / Worker: the live quote snapshot; the browser only formats it." },
+              { label: "Browser work", value: "Only currency/percent formatting and the range-marker positions in ValuationRange happen here." },
               { label: "Interpretation", value: "This is implied upside/downside relative to price, not the conventional discount-to-fair-value denominator." },
+              { label: "Missing data", value: "If the market data does not include a supported value or price, the API keeps the result blank rather than substituting an estimate." },
               { label: "Peer guard", value: "Each multiple needs at least three positive peer observations; the final estimate uses whichever valid methods remain." },
             ]}
           />
@@ -344,18 +478,23 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           <SectionHeading
             id="valuation-history-heading"
             eyebrow="Downside protection"
-            title="How do provider price history and dated DCF values compare?"
-            description="This chart compares returned market-price history with the provider’s dated DCF value series; it is not a history of analyst estimate revisions."
+            title="How does price compare with the DCF value curve?"
+            description="Historical market prices are compared with dated DCF target periods. These points form a valuation curve, not a history of estimate revisions."
             icon={<Activity aria-hidden="true" />}
           />
           <ValuationHistoryChart data={valuationSeries} />
           <CalculationDisclosure
             title="What this chart contains"
-            summary="Historical price points + provider-dated DCF value points"
-            badges={[`Series ${asOfDate(valuationSeries?.asOf)}`]}
+            summary="Historical price + DCF values by model period"
+            badges={[
+              providerDcfPointCount ? `${providerDcfPointCount} DCF periods` : null,
+              `Source ${asOfDate(valuationSeries?.asOf)}`,
+            ]}
             items={[
-              { label: "Price history", value: "Provider adjusted market-price observations." },
-              { label: "DCF series", value: "Dated values returned in the provider DCF module; future dates are valuation forecast periods, not past estimate revisions." },
+              { label: "Price history", value: "Historical market-price observations; this is the navigable series." },
+              { label: "DCF value", value: "The dashed DCF line contains target-period outputs from one current model snapshot. It is not a history of estimate revisions, and it may include a forward period." },
+              { label: "When intrinsic value changes", value: "New cash-flow forecasts, growth or risk assumptions, discount rates, balance-sheet changes, share-count changes, restatements, or a versioned model change can move intrinsic value. Market price alone changes only the gap." },
+              { label: "Historical revisions", value: "A true revision-history line requires point-in-time valuation snapshots with source dates and model versions. The app does not invent that history from today’s inputs." },
               { label: "No persistence score", value: "The app does not calculate a duration, confidence band, or probability from this chart." },
             ]}
           />
@@ -386,14 +525,14 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           </div>
           <CalculationDisclosure
             title="Score and metric definitions"
-            summary="Displayed score labels are local bands; provider score weights are not supplied"
+            summary="Displayed score labels are local bands; score weights are not supplied"
             formulas={[
               { label: "Score label", expression: "≥8 Strong; ≥6.5 Healthy; ≥4.5 Balanced; otherwise Needs review" },
             ]}
             items={[
-              { label: "Scores", value: "Past, health, and future scores are provider-supplied on a 0–10 scale. The feed does not expose their component weights, so the app does not recalculate them." },
-              { label: "Multiples", value: "P/E and P/S use trailing-twelve-month provider figures; P/B uses the latest reported-quarter book value." },
-              { label: "Growth & returns", value: "Revenue growth and earnings growth are provider TTM year-over-year values; ROE is the provider annualized return; dividend yield is trailing twelve months." },
+              { label: "Scores", value: "Past, health, and future scores are reported on a 0–10 scale. Their component weights are not exposed, so the app does not recalculate them." },
+              { label: "Multiples", value: "P/E and P/S use trailing-twelve-month figures; P/B uses the latest reported-quarter book value." },
+              { label: "Growth & returns", value: "Revenue and earnings growth are trailing-twelve-month year-over-year values; ROE is annualized; dividend yield is trailing twelve months." },
             ]}
           />
         </section>
@@ -403,10 +542,13 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             id="financials-heading"
             eyebrow="Owner earnings"
             title="Do profits become cash?"
-            description="Fiscal-year totals are used when returned. If only the provider series is available, it is labelled as a year-end TTM observation rather than an annual sum."
+            description="Fiscal-year totals are used when returned. If only a trailing series is available, it is labelled as a year-end TTM observation rather than an annual sum."
             icon={<FileText aria-hidden="true" />}
           />
-          <FinancialHistoryChart periods={data.financials.annual} />
+          <FinancialHistoryChart
+            periods={data.financials.annual}
+            currency={currency}
+          />
           <div className="security-financial-snapshot">
             <MetricBlock label="Revenue" metric={data.fundamentals.revenue} formatter={(value) => money(value, data.identity.currency, true)} />
             <MetricBlock label="Net income" metric={data.fundamentals.netIncome} formatter={(value) => money(value, data.identity.currency, true)} />
@@ -431,11 +573,14 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
               </div>
             ) : <Unavailable message="No statement history was returned for this security." />}
           </Disclosure>
-          <Disclosure title="Owner-earnings bridge and margins" icon={<CircleDollarSign aria-hidden="true" />}>
+          <Disclosure title="Cash conversion bridge and margins" icon={<CircleDollarSign aria-hidden="true" />}>
             <div className="security-detail-columns">
               <div>
                 <h3>Cash conversion</h3>
-                <CashFlowWaterfall bridge={data.derived.cashFlowBridge} />
+                <CashFlowWaterfall
+                  bridge={data.derived.cashFlowBridge}
+                  currency={currency}
+                />
               </div>
               <div>
                 <h3>Margin snapshot</h3>
@@ -458,7 +603,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
               { label: "Cash conversion bridge", expression: "free cash flow - net income" },
             ]}
             items={[
-              { label: "Free-cash-flow proxy", value: "This is the provider's TTM free cash flow. It is not a locally adjusted owner-earnings figure and does not estimate maintenance capital expenditure." },
+              { label: "Free-cash-flow input", value: "This is reported TTM free cash flow. It is not locally adjusted and is not a replacement for a maintenance-capital-expenditure analysis." },
               { label: "Bridge scope", value: "The waterfall is a simplified reconciliation built from the three displayed totals; it is not a full cash-flow statement." },
             ]}
           />
@@ -506,10 +651,10 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
           </div>
           <CalculationDisclosure
             title="Capital-return inputs"
-            summary="Annual dividend per share and provider-defined debt-to-equity"
+            summary="Annual dividend per share and reported debt-to-equity"
             items={[
-              { label: "Dividend", value: "The first valid annual dividend amount returned by the provider module. Confirm the represented period in company filings." },
-              { label: "Debt / equity", value: "A provider-supplied ratio. The page does not reconstruct it because the provider's debt and equity scope is not included." },
+              { label: "Dividend", value: "The first valid annual dividend amount returned by the cash-flow dataset. Confirm the represented period in company filings." },
+              { label: "Debt / equity", value: "A reported ratio. The page does not reconstruct it because the exact debt and equity scope is not included." },
             ]}
           />
         </section>
@@ -556,7 +701,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
               { label: "Peer median", expression: "middle positive finite observation; average the two middle values when count is even" },
             ]}
             items={[
-              { label: "Selection", value: "Start with the provider industry, exclude the target and duplicate issuers, require at least two usable P/E, P/S, or P/B values, then retain up to eight closest companies by log market-cap distance." },
+              { label: "Selection", value: "Start with the reported industry classification, exclude the target and duplicate issuers, require at least two usable P/E, P/S, or P/B values, then retain up to eight closest companies by log market-cap distance." },
               { label: "Fallback", value: "A broader sector peer group is used when any displayed multiple has fewer than three usable industry observations." },
               { label: "Refresh scope", value: "This table is fetched separately from the overview summary; its timestamp is shown above because a refresh can momentarily differ from the selected peer estimate." },
             ]}
@@ -589,7 +734,7 @@ export default function SecuritySummaryClient({ exchange, symbol }: Props) {
             <h2 id="faq-heading">Questions before capital is at risk</h2>
           </div>
           <div>
-            <details><summary>What makes the current price attractive?<ChevronRight aria-hidden="true" /></summary><p>Price becomes potentially attractive when it sits meaningfully below a conservative estimate of normalized owner earnings or value, while the business quality and balance sheet can protect the downside. A low multiple alone does not establish an opportunity.</p></details>
+            <details><summary>What makes the current price attractive?<ChevronRight aria-hidden="true" /></summary><p>Price becomes potentially attractive when it sits meaningfully below intrinsic value or peer-based value, while business quality and balance-sheet evidence can protect the downside. A low multiple alone does not establish an opportunity.</p></details>
             <details><summary>How much margin of safety is enough?<ChevronRight aria-hidden="true" /></summary><p>The required discount should grow with uncertainty, cyclicality, leverage, customer concentration, and the risk of permanent capital loss. No single percentage is sufficient on its own.</p></details>
             <details><summary>What can invalidate the opportunity?<ChevronRight aria-hidden="true" /></summary><p>Persistent margin erosion, weaker cash conversion, balance-sheet stress, dilution, poor capital allocation, or evidence that normalized demand is lower than assumed can break the thesis even if the quoted price falls.</p></details>
             <details><summary>What should I verify before acting?<ChevronRight aria-hidden="true" /></summary><p>Read current company filings, reconcile reported earnings with cash flow, test valuation assumptions, inspect debt and dilution, compare credible alternatives, and decide whether the possible loss fits your objectives and risk tolerance.</p></details>
@@ -693,7 +838,7 @@ function ScoreCard({
 
 function ValuationRange({ data }: { data: SecuritySummary }) {
   const marks = [
-    { label: "Provider DCF", value: data.valuation.dcfValue.value, className: "is-bear" },
+    { label: "Earnings-power floor", value: data.valuation.earningsPowerFloor.value, className: "is-bear" },
     { label: "Selected value", value: data.valuation.fairValue.value, className: "is-base" },
     { label: "Peer estimate", value: data.valuation.peerValue.value, className: "is-bull" },
   ];
